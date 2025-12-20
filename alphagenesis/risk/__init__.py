@@ -15,10 +15,14 @@ from alphagenesis.risk.var_calculator import VaRCalculator
 from alphagenesis.risk.garch_model import GARCHModel
 from alphagenesis.risk.portfolio_optimizer import PortfolioOptimizer
 from alphagenesis.risk.risk_manager import RiskManager
+from alphagenesis.risk.position_sizer import PositionSizer
+from alphagenesis.risk.circuit_breaker import CircuitBreaker
 
 __all__ = [
     "VaRCalculator",
     "GARCHModel",
     "PortfolioOptimizer",
     "RiskManager",
+    "PositionSizer",
+    "CircuitBreaker",
 ]
