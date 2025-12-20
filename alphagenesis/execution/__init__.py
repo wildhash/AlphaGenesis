@@ -12,9 +12,11 @@ Components:
 from alphagenesis.execution.order_executor import OrderExecutor
 from alphagenesis.execution.order_manager import OrderManager
 from alphagenesis.execution.portfolio import Portfolio
+from alphagenesis.execution.live_loop import LiveTradingLoop
 
 __all__ = [
     "OrderExecutor",
     "OrderManager",
     "Portfolio",
+    "LiveTradingLoop",
 ]

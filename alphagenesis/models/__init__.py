@@ -15,10 +15,12 @@ from alphagenesis.models.lstm_model import LSTMModel
 from alphagenesis.models.transformer_model import TransformerModel
 from alphagenesis.models.rl_agent import RLTradingAgent
 from alphagenesis.models.ensemble import EnsemblePredictor
+from alphagenesis.models.train_pipeline import TrainingPipeline
 
 __all__ = [
     "LSTMModel",
     "TransformerModel",
     "RLTradingAgent",
     "EnsemblePredictor",
+    "TrainingPipeline",
 ]

@@ -6,12 +6,13 @@ Uses environment variables for sensitive data.
 """
 
 import os
-from typing import List, Optional
-from pydantic import BaseSettings, Field
+from typing import List, Optional, Dict, Any
+from dataclasses import dataclass, field
 from loguru import logger
 
 
-class Settings(BaseSettings):
+@dataclass
+class Settings:
     """
     Application settings loaded from environment variables.
     
@@ -23,110 +24,44 @@ class Settings(BaseSettings):
     """
     
     # WEEX API Configuration
-    weex_api_key: str = Field(default="", env="WEEX_API_KEY")
-    weex_api_secret: str = Field(default="", env="WEEX_API_SECRET")
-    weex_api_passphrase: str = Field(default="", env="WEEX_API_PASSPHRASE")
-    weex_base_url: str = Field(
-        default="https://api.weex.com",
-        env="WEEX_BASE_URL"
-    )
-    weex_testnet: bool = Field(default=False, env="WEEX_TESTNET")
+    weex_api_key: str = field(default_factory=lambda: os.getenv("WEEX_API_KEY", ""))
+    weex_api_secret: str = field(default_factory=lambda: os.getenv("WEEX_API_SECRET", ""))
+    weex_api_passphrase: str = field(default_factory=lambda: os.getenv("WEEX_API_PASSPHRASE", ""))
+    weex_base_url: str = field(default_factory=lambda: os.getenv("WEEX_BASE_URL", "https://api.weex.com"))
+    weex_testnet: bool = field(default_factory=lambda: os.getenv("WEEX_TESTNET", "false").lower() == "true")
     
     # Risk Management Settings
-    max_leverage: float = Field(
-        default=20.0,
-        description="Maximum leverage (WEEX hackathon cap: 20x)"
-    )
-    max_position_size: float = Field(
-        default=0.3,
-        description="Maximum single position size as fraction of portfolio"
-    )
-    max_daily_drawdown: float = Field(
-        default=0.10,
-        description="Maximum daily drawdown (10%)"
-    )
-    max_total_drawdown: float = Field(
-        default=0.25,
-        description="Maximum total drawdown (25%)"
-    )
-    stop_loss_pct: float = Field(
-        default=0.02,
-        description="Default stop loss percentage"
-    )
-    take_profit_pct: float = Field(
-        default=0.04,
-        description="Default take profit percentage"
-    )
+    max_leverage: float = 20.0  # Maximum leverage (WEEX hackathon cap: 20x)
+    max_position_size: float = 0.3  # Maximum single position size as fraction of portfolio
+    max_daily_drawdown: float = 0.10  # Maximum daily drawdown (10%)
+    max_total_drawdown: float = 0.25  # Maximum total drawdown (25%)
+    stop_loss_pct: float = 0.02  # Default stop loss percentage
+    take_profit_pct: float = 0.04  # Default take profit percentage
     
     # Trading Configuration
-    trading_pairs: List[str] = Field(
-        default=["BTC/USDT", "ETH/USDT", "SOL/USDT"],
-        description="Trading pairs to trade"
-    )
-    default_timeframe: str = Field(
-        default="1h",
-        description="Default candlestick timeframe"
-    )
-    initial_capital: float = Field(
-        default=100000.0,
-        description="Initial capital for trading"
-    )
+    trading_pairs: List[str] = field(default_factory=lambda: ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    default_timeframe: str = "1h"  # Default candlestick timeframe
+    initial_capital: float = 100000.0  # Initial capital for trading
     
     # Model Configuration
-    model_device: str = Field(
-        default="cuda",
-        env="MODEL_DEVICE",
-        description="Device for model training (cuda/cpu)"
-    )
-    model_checkpoint_dir: str = Field(
-        default="./models/saved",
-        description="Directory for saved model checkpoints"
-    )
+    model_device: str = field(default_factory=lambda: os.getenv("MODEL_DEVICE", "cuda"))
+    model_checkpoint_dir: str = "./models/saved"  # Directory for saved model checkpoints
     
     # Data Configuration
-    data_dir: str = Field(
-        default="./data",
-        description="Directory for storing market data"
-    )
-    cache_enabled: bool = Field(
-        default=True,
-        description="Enable data caching"
-    )
+    data_dir: str = "./data"  # Directory for storing market data
+    cache_enabled: bool = True  # Enable data caching
     
     # Logging Configuration
-    log_level: str = Field(
-        default="INFO",
-        env="LOG_LEVEL",
-        description="Logging level"
-    )
-    log_file: Optional[str] = Field(
-        default="alphagenesis.log",
-        description="Log file path"
-    )
+    log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
+    log_file: Optional[str] = "alphagenesis.log"  # Log file path
     
     # Backtesting Configuration
-    backtest_start_date: Optional[str] = Field(
-        default=None,
-        description="Backtest start date (YYYY-MM-DD)"
-    )
-    backtest_end_date: Optional[str] = Field(
-        default=None,
-        description="Backtest end date (YYYY-MM-DD)"
-    )
+    backtest_start_date: Optional[str] = None  # Backtest start date (YYYY-MM-DD)
+    backtest_end_date: Optional[str] = None  # Backtest end date (YYYY-MM-DD)
     
     # Performance Configuration
-    enable_monitoring: bool = Field(
-        default=True,
-        description="Enable performance monitoring"
-    )
-    prometheus_port: int = Field(
-        default=9090,
-        description="Prometheus metrics port"
-    )
-    
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    enable_monitoring: bool = True  # Enable performance monitoring
+    prometheus_port: int = 9090  # Prometheus metrics port
     
     def validate_api_credentials(self) -> bool:
         """
@@ -188,7 +123,7 @@ class Settings(BaseSettings):
         
         return True
     
-    def get_trading_pair_configs(self) -> dict:
+    def get_trading_pair_configs(self) -> Dict[str, Dict[str, Any]]:
         """
         Get trading pair specific configurations.
         
@@ -214,12 +149,15 @@ class Settings(BaseSettings):
 # Global settings instance
 settings = Settings()
 
-# Validate on import
-if not settings.validate_api_credentials():
-    logger.warning(
-        "API credentials not configured. Set WEEX_API_KEY and WEEX_API_SECRET "
-        "environment variables."
-    )
-
-if not settings.validate_risk_limits():
-    logger.error("Risk limits validation failed. Please review configuration.")
+# Validate on import (only log warnings, don't fail)
+try:
+    if not settings.validate_api_credentials():
+        logger.warning(
+            "API credentials not configured. Set WEEX_API_KEY and WEEX_API_SECRET "
+            "environment variables."
+        )
+    
+    if not settings.validate_risk_limits():
+        logger.error("Risk limits validation failed. Please review configuration.")
+except Exception as e:
+    logger.warning(f"Error validating settings: {e}")
