@@ -14,9 +14,11 @@ Components:
 from alphagenesis.data.weex_client import WEEXClient
 from alphagenesis.data.data_fetcher import DataFetcher
 from alphagenesis.data.data_storage import DataStorage
+from alphagenesis.data.data_cleaner import DataCleaner
 
 __all__ = [
     "WEEXClient",
     "DataFetcher",
     "DataStorage",
+    "DataCleaner",
 ]

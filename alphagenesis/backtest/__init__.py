@@ -12,8 +12,10 @@ Components:
 
 from alphagenesis.backtest.backtester import Backtester
 from alphagenesis.backtest.performance_metrics import PerformanceMetrics
+from alphagenesis.backtest.metrics_report import MetricsReportGenerator
 
 __all__ = [
     "Backtester",
     "PerformanceMetrics",
+    "MetricsReportGenerator",
 ]
