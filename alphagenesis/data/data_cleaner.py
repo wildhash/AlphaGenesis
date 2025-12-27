@@ -224,8 +224,10 @@ class DataCleaner:
         # Check for common data quality issues
         issues = []
         
-        if validation_results["missing_values_total"] := sum(validation_results["missing_values"].values()):
-            issues.append(f"Found {validation_results['missing_values_total']} missing values")
+        missing_total = sum(validation_results["missing_values"].values())
+        validation_results["missing_values_total"] = missing_total
+        if missing_total:
+            issues.append(f"Found {missing_total} missing values")
         
         if validation_results["duplicate_timestamps"] > 0:
             issues.append(f"Found {validation_results['duplicate_timestamps']} duplicate timestamps")

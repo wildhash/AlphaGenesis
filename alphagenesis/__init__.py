@@ -1,20 +1,21 @@
 """
 AlphaGenesis: An institutional-grade, AI-powered quantitative trading system.
 
-This package provides a comprehensive framework for developing and deploying
-AI-driven quantitative trading strategies in cryptocurrency markets, with
-specific integration for the WEEX exchange API.
+Built for the WEEX AI Wars Hackathon - implementing DeepSeek's winning strategy.
 
 Key Features:
+    - DeepSeek-inspired reasoning layer for disciplined decision making
     - Advanced ML models (LSTM, Transformers, Reinforcement Learning)
+    - Multi-timeframe confluence analysis
+    - Market regime detection
     - Sophisticated risk management (VaR, GARCH, portfolio optimization)
     - Event-driven backtesting engine
-    - Modular architecture for data pipeline, feature engineering, and execution
     - Real-time market data processing and order execution
 
 Modules:
+    ai: DeepSeek reasoning layer and AI decision making
     data: Data pipeline and WEEX API integration
-    features: Feature engineering and technical indicators
+    features: Feature engineering, regime detection, and confluence
     models: Machine learning models and predictive algorithms
     risk: Risk management and portfolio optimization
     backtest: Event-driven backtesting framework
@@ -22,11 +23,12 @@ Modules:
     utils: Utility functions and helpers
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "AlphaGenesis Team"
 __license__ = "MIT"
 
 from alphagenesis import (
+    ai,
     data,
     features,
     models,
@@ -37,6 +39,7 @@ from alphagenesis import (
 )
 
 __all__ = [
+    "ai",
     "data",
     "features",
     "models",
