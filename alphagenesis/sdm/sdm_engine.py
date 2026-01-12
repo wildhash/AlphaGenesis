@@ -127,8 +127,17 @@ class SDMTradingEngine:
         self.daily_trades = 0
         self.last_trade_time = None
 
-        # Symbols to trade
-        self.symbols = ['cmt_btcusdt', 'cmt_ethusdt']
+        # Symbols to trade (all approved WEEX AI Wars pairs)
+        self.symbols = [
+            'cmt_btcusdt',
+            'cmt_ethusdt',
+            'cmt_solusdt',
+            'cmt_dogeusdt',
+            'cmt_xrpusdt',
+            'cmt_adausdt',
+            'cmt_bnbusdt',
+            'cmt_ltcusdt'
+        ]
 
         # Graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
