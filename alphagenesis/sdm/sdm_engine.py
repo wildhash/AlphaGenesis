@@ -450,8 +450,9 @@ class SDMTradingEngine:
         except:
             return None
 
-        # Position sizing
-        position_size_pct = 0.10  # 10% of capital
+        # Position sizing - AGGRESSIVE for competition
+        # Use 40% of capital per trade with higher leverage for faster gains
+        position_size_pct = 0.40  # Increased from 10% to 40%
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
@@ -461,7 +462,7 @@ class SDMTradingEngine:
             'confidence': confidence,
             'entry_price': price,
             'position_size': size,
-            'max_leverage': 10.0,
+            'max_leverage': 15.0,  # Increased from 10x to 15x
             'risk_reward_ratio': 3.0,
         }
 
