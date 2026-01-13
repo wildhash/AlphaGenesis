@@ -207,7 +207,7 @@ class WEEXClient:
         """
         params = {
             "symbol": symbol,
-            "period": interval,
+            "granularity": interval,
             "limit": limit
         }
         return self._request("GET", self.CANDLES_ENDPOINT, params=params)
