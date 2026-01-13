@@ -357,13 +357,25 @@ class SDMTradingEngine:
             if not candles:
                 return MarketRegime.UNKNOWN
 
-            # Extract closes
+            # Extract closes - handle both dict and list formats
+            closes = []
             if isinstance(candles, dict) and 'data' in candles:
-                closes = [float(c.get('close', 0)) for c in candles['data']]
+                # Response wrapped in 'data' key
+                data = candles['data']
             elif isinstance(candles, list):
-                closes = [float(c.get('close', c[-2])) for c in candles if isinstance(c, (dict, list))]
+                # Direct list response
+                data = candles
             else:
                 return MarketRegime.UNKNOWN
+
+            # Parse individual candles
+            for c in data:
+                if isinstance(c, dict):
+                    # Dictionary format: {'close': value, ...}
+                    closes.append(float(c.get('close', 0)))
+                elif isinstance(c, list) and len(c) >= 5:
+                    # Array format: [timestamp, open, high, low, close, volume]
+                    closes.append(float(c[4]))  # close is at index 4
 
             if len(closes) < 50:
                 return MarketRegime.UNKNOWN
