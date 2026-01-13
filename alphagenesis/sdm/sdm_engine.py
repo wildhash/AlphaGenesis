@@ -28,6 +28,7 @@ from .semantic_binding import SemanticBindingLayer, ModelType, MarketRegime
 from .continuous_learning import ContinuousLearningEngine, PerformanceFeedback
 from .constraint_propagation import ConstraintPropagator
 from .ethics_engine import EthicsEngine
+from .simple_momentum import SimpleMomentumStrategy
 
 # AlphaGenesis Components
 from alphagenesis.data import WEEXClient
@@ -118,6 +119,10 @@ class SDMTradingEngine:
             max_daily_drawdown=0.10,
             max_total_drawdown=0.25
         )
+
+        # Simple momentum strategy (proven indicators, not untrained ML)
+        self.momentum_strategy = SimpleMomentumStrategy()
+        logger.info("✓ Momentum strategy initialized (RSI, MA, momentum-based)")
 
         # State
         self.is_running = False
@@ -418,28 +423,11 @@ class SDMTradingEngine:
         context: Dict
     ) -> Optional[Dict]:
         """
-        Generate a proposed action.
+        Generate a proposed action using momentum strategy.
 
-        This would normally invoke the actual model.
-        For now, we use simplified logic.
+        Uses proven technical indicators (RSI, MA, momentum) instead of
+        untrained ML models for reliable signals.
         """
-        # Simplified action generation
-        if regime in [MarketRegime.STRONG_UPTREND]:
-            direction = 'LONG'
-            confidence = 0.75
-        elif regime in [MarketRegime.STRONG_DOWNTREND]:
-            direction = 'SHORT'
-            confidence = 0.75
-        elif regime in [MarketRegime.SIDEWAYS]:
-            direction = 'HOLD'
-            confidence = 0.5
-        else:
-            direction = 'HOLD'
-            confidence = 0.3
-
-        if direction == 'HOLD':
-            return {'direction': 'HOLD', 'confidence': confidence}
-
         # Get current price
         try:
             ticker = self.weex.get_ticker(symbol)
@@ -450,6 +438,18 @@ class SDMTradingEngine:
         except:
             return None
 
+        # Fetch candles for momentum strategy
+        try:
+            candles = self.weex.get_candles(symbol=symbol, interval='1H', limit=100)
+        except:
+            return None
+
+        # Generate signal using momentum strategy
+        signal = self.momentum_strategy.generate_signal(candles, price, symbol)
+
+        if not signal:
+            return {'direction': 'HOLD', 'confidence': 0.0}
+
         # Position sizing - AGGRESSIVE for competition
         # Use 40% of capital per trade with higher leverage for faster gains
         position_size_pct = 0.40  # Increased from 10% to 40%
@@ -458,12 +458,13 @@ class SDMTradingEngine:
 
         return {
             'symbol': symbol,
-            'direction': direction,
-            'confidence': confidence,
+            'direction': signal['direction'],
+            'confidence': signal['confidence'],
             'entry_price': price,
             'position_size': size,
             'max_leverage': 15.0,  # Increased from 10x to 15x
             'risk_reward_ratio': 3.0,
+            'reason': signal.get('reason', '')
         }
 
     def _execute_action(
