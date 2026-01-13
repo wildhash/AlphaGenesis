@@ -188,26 +188,45 @@ class WEEXClient:
         """
         return self._request("GET", self.TICKER_ENDPOINT, params={"symbol": symbol})
 
+    def _convert_interval_to_granularity(self, interval: str) -> str:
+        """
+        Convert common interval formats to WEEX granularity format.
+        WEEX uses lowercase: 1m, 5m, 15m, 30m, 1h, 4h, 1d, 1w
+        """
+        # Mapping of common interval formats to WEEX format (lowercase)
+        interval_map = {
+            "1m": "1m", "1min": "1m",
+            "5m": "5m", "5min": "5m",
+            "15m": "15m", "15min": "15m",
+            "30m": "30m", "30min": "30m",
+            "1h": "1h", "1H": "1h", "1hour": "1h", "60m": "1h",
+            "4h": "4h", "4H": "4h", "4hour": "4h", "240m": "4h",
+            "1d": "1d", "1D": "1d", "1day": "1d", "1440m": "1d",
+            "1w": "1w", "1W": "1w", "1week": "1w",
+        }
+        return interval_map.get(interval, interval.lower())
+
     def get_candles(
-        self, 
+        self,
         symbol: str = "cmt_btcusdt",
         interval: str = "1H",
         limit: int = 200
     ) -> Dict[str, Any]:
         """
         Get historical candlestick data.
-        
+
         Args:
             symbol: Trading pair
             interval: Candle interval (1m, 5m, 15m, 1H, 4H, 1D)
             limit: Number of candles (max 1000)
-            
+
         Returns:
             List of OHLCV candles
         """
+        granularity = self._convert_interval_to_granularity(interval)
         params = {
             "symbol": symbol,
-            "granularity": interval,
+            "granularity": granularity,
             "limit": limit
         }
         return self._request("GET", self.CANDLES_ENDPOINT, params=params)
