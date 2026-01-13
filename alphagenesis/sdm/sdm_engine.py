@@ -37,7 +37,7 @@ from alphagenesis.features import (
     MultiTimeframeConfluence,
     TechnicalIndicators
 )
-from alphagenesis.models import LSTMModel, TransformerModel, EnsembleModel
+from alphagenesis.models import LSTMModel, TransformerModel, EnsemblePredictor
 from alphagenesis.risk import RiskManager
 from alphagenesis.risk.circuit_breaker import CircuitBreaker
 
