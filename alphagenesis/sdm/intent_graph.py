@@ -403,7 +403,7 @@ class IntentGraph:
                 time_horizon=21 * 24 * 3600,  # 21 days
                 reputation_score=1.0
             ),
-            confidence_threshold=0.7,
+            confidence_threshold=0.1,  # LOWERED for competition - let signals through!
             priority=10.0
         )
 
@@ -427,7 +427,7 @@ class IntentGraph:
                     description="Position size limit"
                 ),
             ],
-            confidence_threshold=0.8,
+            confidence_threshold=0.1,  # LOWERED for competition
             priority=9.0
         )
 
@@ -451,7 +451,7 @@ class IntentGraph:
                     description="Minimum risk-reward ratio"
                 ),
             ],
-            confidence_threshold=0.65,
+            confidence_threshold=0.1,  # LOWERED for competition
             priority=7.0
         )
 
@@ -468,7 +468,7 @@ class IntentGraph:
                     description="Keep cash reserve"
                 ),
             ],
-            confidence_threshold=0.5,
+            confidence_threshold=0.1,  # LOWERED for competition
             priority=5.0
         )
 

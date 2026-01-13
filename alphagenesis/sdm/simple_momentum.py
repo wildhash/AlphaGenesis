@@ -94,8 +94,8 @@ class SimpleMomentumStrategy:
 
             # REVERSAL SIGNALS - Extreme RSI overrides everything
             # When RSI is VERY oversold/overbought, market often reverses
-            if rsi < 25:  # Extremely oversold - buy the dip!
-                confidence = min(0.85, (25 - rsi) / 15)
+            if rsi < 30:  # Extremely oversold - buy the dip!
+                confidence = min(0.85, (30 - rsi) / 20)
                 logger.info(f"🟢 REVERSAL LONG signal for {symbol}: RSI extremely oversold at {rsi:.1f}")
                 return {
                     'direction': 'LONG',
@@ -103,8 +103,8 @@ class SimpleMomentumStrategy:
                     'reason': f'RSI={rsi:.1f} extremely oversold - reversal play'
                 }
 
-            if rsi > 75:  # Extremely overbought - short the top!
-                confidence = min(0.85, (rsi - 75) / 15)
+            if rsi > 70:  # Extremely overbought - short the top!
+                confidence = min(0.85, (rsi - 70) / 20)
                 logger.info(f"🔴 REVERSAL SHORT signal for {symbol}: RSI extremely overbought at {rsi:.1f}")
                 return {
                     'direction': 'SHORT',
