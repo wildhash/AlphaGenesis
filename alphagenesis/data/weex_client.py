@@ -341,7 +341,31 @@ class WEEXClient:
             Rounded size
         """
         import math
-        return math.floor(size / step_size) * step_size
+        import decimal
+        # Use Decimal for precise rounding to avoid floating point errors
+        d_size = decimal.Decimal(str(size))
+        d_step = decimal.Decimal(str(step_size))
+        return float((d_size // d_step) * d_step)
+
+    def _format_size(self, size: float, step_size: float) -> str:
+        """
+        Format order size as string with correct precision.
+
+        Args:
+            size: Order size
+            step_size: Step size to determine decimal places
+
+        Returns:
+            Formatted size string
+        """
+        # Determine decimal places from step_size
+        step_str = f"{step_size:.10f}".rstrip('0')
+        if '.' in step_str:
+            decimals = len(step_str.split('.')[1])
+        else:
+            decimals = 0
+
+        return f"{size:.{decimals}f}"
 
     def place_order(
         self,
@@ -377,11 +401,11 @@ class WEEXClient:
 
         if client_oid is None:
             client_oid = f"{int(time.time() * 1000)}{os.urandom(4).hex()}"
-        
+
         data = {
             "symbol": symbol,
             "client_oid": client_oid,
-            "size": str(size),
+            "size": self._format_size(size, step_size),
             "type": str(side),
             "order_type": order_type,
             "match_price": "1" if is_market else "0",
