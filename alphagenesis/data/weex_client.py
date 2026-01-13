@@ -304,7 +304,45 @@ class WEEXClient:
     # =========================================================================
     # PRIVATE ORDER ENDPOINTS
     # =========================================================================
-    
+
+    def _get_step_size(self, symbol: str) -> float:
+        """
+        Get the stepSize for order quantity based on symbol.
+        WEEX requires order sizes to match stepSize increments.
+
+        Args:
+            symbol: Trading pair (e.g., 'cmt_btcusdt')
+
+        Returns:
+            stepSize for the symbol
+        """
+        # Common stepSize values for WEEX futures
+        step_sizes = {
+            'cmt_btcusdt': 0.001,
+            'cmt_ethusdt': 0.01,
+            'cmt_solusdt': 0.1,
+            'cmt_dogeusdt': 1.0,
+            'cmt_xrpusdt': 1.0,
+            'cmt_adausdt': 1.0,
+            'cmt_bnbusdt': 0.01,
+            'cmt_ltcusdt': 0.1,
+        }
+        return step_sizes.get(symbol, 0.1)  # Default to 0.1 if unknown
+
+    def _round_size(self, size: float, step_size: float) -> float:
+        """
+        Round order size to match stepSize requirement.
+
+        Args:
+            size: Original order size
+            step_size: Required step size
+
+        Returns:
+            Rounded size
+        """
+        import math
+        return math.floor(size / step_size) * step_size
+
     def place_order(
         self,
         symbol: str,
@@ -317,7 +355,7 @@ class WEEXClient:
     ) -> Dict[str, Any]:
         """
         Place a futures order.
-        
+
         Args:
             symbol: Trading pair (e.g., 'cmt_btcusdt')
             side: 1=open long, 2=open short, 3=close long, 4=close short
@@ -326,10 +364,17 @@ class WEEXClient:
             order_type: "0"=normal, "1"=post only, "2"=FOK, "3"=IOC
             is_market: True for market order, False for limit
             client_oid: Optional client order ID
-            
+
         Returns:
             Order placement result with order_id
         """
+        # Round size to match WEEX stepSize requirements
+        step_size = self._get_step_size(symbol)
+        size = self._round_size(size, step_size)
+
+        if size <= 0:
+            return {"error": f"Order size too small after rounding to stepSize {step_size}", "status_code": 400}
+
         if client_oid is None:
             client_oid = f"{int(time.time() * 1000)}{os.urandom(4).hex()}"
         
