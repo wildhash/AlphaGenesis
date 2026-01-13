@@ -261,12 +261,24 @@ class AlphaGenesisEngine:
         for tf in self.TIMEFRAMES:
             try:
                 candles = self.weex.get_candles(symbol=symbol, interval=tf.upper(), limit=200)
-                if candles and isinstance(candles, list):
-                    # Extract close prices
-                    closes = [float(c.get('close', c[-2])) for c in candles if isinstance(c, (dict, list))]
-                    data[tf] = closes
-                elif isinstance(candles, dict) and 'data' in candles:
-                    closes = [float(c.get('close', 0)) for c in candles['data']]
+
+                # Parse candles - handle both dict and list formats
+                closes = []
+                if isinstance(candles, dict) and 'data' in candles:
+                    candle_data = candles['data']
+                elif isinstance(candles, list):
+                    candle_data = candles
+                else:
+                    candle_data = []
+
+                # Extract close prices from each candle
+                for c in candle_data:
+                    if isinstance(c, dict):
+                        closes.append(float(c.get('close', 0)))
+                    elif isinstance(c, list) and len(c) >= 5:
+                        closes.append(float(c[4]))  # close at index 4
+
+                if closes:
                     data[tf] = closes
             except Exception as e:
                 logger.warning(f"Error fetching {tf} data: {e}")
