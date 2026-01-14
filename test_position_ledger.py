@@ -110,27 +110,36 @@ def test_reconciliation():
     exchange_positions = [
         {'symbol': 'cmt_btcusdt', 'side': 'LONG', 'size': 0.5}
     ]
-    is_consistent = ledger.reconcile_with_exchange(exchange_positions)
+    is_consistent, warnings = ledger.reconcile_with_exchange(exchange_positions)
     assert is_consistent, "Should match when exchange state is consistent"
+    assert len(warnings) == 0, "Should have no warnings when matched"
     print("✓ Reconciliation successful with matching state")
 
-    # Test mismatched side
-    print("\n[TEST 2] Reconciling with mismatched side (should fail)...")
+    # Test mismatched side (should warn but stay consistent during grace period)
+    print("\n[TEST 2] Reconciling with mismatched side (grace period)...")
     exchange_positions = [
         {'symbol': 'cmt_btcusdt', 'side': 'SHORT', 'size': 0.5}
     ]
-    is_consistent = ledger.reconcile_with_exchange(exchange_positions)
-    assert not is_consistent, "Should detect side mismatch"
-    print("✓ Correctly detected side mismatch")
+    is_consistent, warnings = ledger.reconcile_with_exchange(exchange_positions)
+    assert is_consistent, "Should stay consistent during grace period"
+    print("✓ Side mismatch detected, in grace period (not immediate SAFE MODE)")
 
-    # Test mismatched size
-    print("\n[TEST 3] Reconciling with mismatched size (should fail)...")
+    # Test mismatched size (should warn during grace period)
+    print("\n[TEST 3] Reconciling with mismatched size (grace period)...")
     exchange_positions = [
         {'symbol': 'cmt_btcusdt', 'side': 'LONG', 'size': 1.0}
     ]
-    is_consistent = ledger.reconcile_with_exchange(exchange_positions)
-    assert not is_consistent, "Should detect size mismatch"
-    print("✓ Correctly detected size mismatch")
+    is_consistent, warnings = ledger.reconcile_with_exchange(exchange_positions)
+    assert is_consistent, "Should stay consistent during grace period"
+    print("✓ Size mismatch detected, in grace period")
+
+    # Test persistence beyond grace period (simulate)
+    print("\n[TEST 4] Testing SAFE MODE after grace period...")
+    import time
+    ledger.desync_grace_seconds = 0  # Make grace period instant for testing
+    is_consistent, warnings = ledger.reconcile_with_exchange(exchange_positions)
+    assert not is_consistent, "Should enter SAFE MODE after grace period"
+    print("✓ SAFE MODE correctly triggered after grace period")
 
     print("\n" + "="*70)
     print("RECONCILIATION TESTS PASSED ✓")

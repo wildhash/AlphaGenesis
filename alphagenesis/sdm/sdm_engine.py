@@ -624,8 +624,12 @@ class SDMTradingEngine:
                         'size': size
                     })
 
-            # Reconcile with ledger
-            is_consistent = self.position_ledger.reconcile_with_exchange(exchange_positions)
+            # Reconcile with ledger (bidirectional with grace period)
+            is_consistent, warnings = self.position_ledger.reconcile_with_exchange(exchange_positions)
+
+            if warnings:
+                for warning in warnings:
+                    logger.warning(f"  ⚠️ {warning}")
 
             if not is_consistent:
                 logger.critical("❌ LEDGER MISMATCH - ENTERING SAFE MODE")
