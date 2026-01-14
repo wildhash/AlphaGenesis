@@ -501,13 +501,37 @@ class WEEXClient:
         raise ValueError(f"Could not parse price from ticker: {ticker}")
     
     def get_account_balance(self) -> float:
-        """Get USDT balance."""
+        """
+        Get available USDT balance (total - margin used by positions).
+
+        WEEX API doesn't provide 'available' field directly in SHARED margin mode.
+        We must calculate: available = total_amount - sum(position_margin)
+        """
         account = self.get_account()
+
+        # Get total balance
+        total_balance = 0.0
         if "collateral" in account:
             for c in account["collateral"]:
                 if c.get("coin_id") == 2:  # USDT
-                    return float(c.get("amount", 0))
-        return 0.0
+                    total_balance = float(c.get("amount", 0))
+                    break
+
+        # Calculate margin used by open positions
+        margin_used = 0.0
+        if "position" in account:
+            for pos in account["position"]:
+                if float(pos.get("size", 0)) != 0:  # Active position
+                    open_value = float(pos.get("open_value", 0))
+                    leverage = float(pos.get("leverage", 20))
+                    margin_used += open_value / leverage
+
+        # Available = Total - Margin Used
+        available = total_balance - margin_used
+
+        logger.debug(f"Balance: total=${total_balance:.2f}, margin_used=${margin_used:.2f}, available=${available:.2f}")
+
+        return max(0.0, available)  # Ensure non-negative
     
     def open_long(self, symbol: str, size: float, is_market: bool = True) -> Dict:
         """Open a long position."""
