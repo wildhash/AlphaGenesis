@@ -869,9 +869,15 @@ class SDMTradingEngine:
             for pos in account['position']:
                 size = float(pos.get('size', 0))
                 if size > 0:  # Only active positions
-                    # WEEX uses numeric side: 1=LONG, 2=SHORT
-                    side_num = int(pos.get('side', 1))
-                    side_str = 'LONG' if side_num == 1 else 'SHORT'
+                    # Handle both numeric (1/2) and string ("LONG"/"SHORT") side formats
+                    side_value = pos.get('side', 1)
+                    if isinstance(side_value, str):
+                        # String format: "LONG", "SHORT", "long", "short"
+                        side_str = side_value.upper()
+                    else:
+                        # Numeric format: 1=LONG, 2=SHORT
+                        side_num = int(side_value)
+                        side_str = 'LONG' if side_num == 1 else 'SHORT'
 
                     exchange_positions.append({
                         'symbol': pos['symbol'],
