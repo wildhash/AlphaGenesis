@@ -461,8 +461,8 @@ class SDMTradingEngine:
         import decimal
         step_sizes = {
             'cmt_btcusdt': 0.001, 'cmt_ethusdt': 0.01, 'cmt_solusdt': 0.1,
-            'cmt_dogeusdt': 1.0, 'cmt_xrpusdt': 1.0, 'cmt_adausdt': 1.0,
-            'cmt_bnbusdt': 0.1, 'cmt_ltcusdt': 0.1  # BNB fixed: API requires 0.1
+            'cmt_dogeusdt': 100.0, 'cmt_xrpusdt': 10.0, 'cmt_adausdt': 10.0,
+            'cmt_bnbusdt': 0.1, 'cmt_ltcusdt': 0.1  # DOGE=100, XRP/ADA=10 from API
         }
         step = step_sizes.get(symbol, 0.1)
         d_size = decimal.Decimal(str(size))
