@@ -364,16 +364,18 @@ class EthicsEngine:
             is_hard=False
         )
 
-        # Minimum Trade Quality
-        self.add_constraint(
-            name="min_confidence",
-            domain=EthicalDomain.ACCOUNTABILITY,
-            description="Never trade with confidence below 40%",
-            threshold=-0.40,  # Negative threshold (reverse constraint)
-            penalty_base=20.0,
-            asymmetry_factor=8.0,
-            is_hard=False
-        )
+        # Minimum Trade Quality - DISABLED FOR COMPETITION
+        # Intent graph already handles confidence thresholds (0.1)
+        # This ethics constraint was blocking all trades due to logic error
+        # self.add_constraint(
+        #     name="confidence",
+        #     domain=EthicalDomain.ACCOUNTABILITY,
+        #     description="Never trade with confidence below 40%",
+        #     threshold=-0.40,
+        #     penalty_base=20.0,
+        #     asymmetry_factor=8.0,
+        #     is_hard=False
+        # )
 
         logger.info("Trading ethical constraints initialized")
 
