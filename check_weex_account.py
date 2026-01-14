@@ -24,20 +24,37 @@ def main():
     print("\n=== ACCOUNT BALANCE ===")
     account = client.get_account()
 
+    # Show FULL raw response to debug
+    import json
+    print(f"\nFULL RAW API RESPONSE:")
+    print(json.dumps(account, indent=2))
+
     if 'data' in account:
         data = account['data']
-        print(f"Raw response: {data}")
+
+        # Show all fields in the account data
+        print(f"\nACCOUNT DATA KEYS: {list(data.keys())}")
 
         if 'collateral' in data:
+            print(f"\nCOLLATERAL DATA:")
             for c in data['collateral']:
+                print(f"  Full collateral entry: {c}")
                 if c.get('coin_id') == 2:  # USDT
-                    print(f"  Total Balance: ${float(c.get('amount', 0)):,.2f}")
+                    print(f"\n  === USDT BREAKDOWN ===")
+                    print(f"  Total Balance (amount): ${float(c.get('amount', 0)):,.2f}")
                     print(f"  Available: ${float(c.get('available', 0)):,.2f}")
                     print(f"  Frozen: ${float(c.get('frozen', 0)):,.2f}")
+                    # Check for other fields
+                    for key, value in c.items():
+                        if key not in ['amount', 'available', 'frozen', 'coin_id']:
+                            print(f"  {key}: {value}")
     elif 'collateral' in account:
+        print(f"\nCOLLATERAL DATA (no data wrapper):")
         for c in account['collateral']:
+            print(f"  Full collateral entry: {c}")
             if c.get('coin_id') == 2:  # USDT
-                print(f"  Total Balance: ${float(c.get('amount', 0)):,.2f}")
+                print(f"\n  === USDT BREAKDOWN ===")
+                print(f"  Total Balance (amount): ${float(c.get('amount', 0)):,.2f}")
                 print(f"  Available: ${float(c.get('available', 0)):,.2f}")
                 print(f"  Frozen: ${float(c.get('frozen', 0)):,.2f}")
     else:
