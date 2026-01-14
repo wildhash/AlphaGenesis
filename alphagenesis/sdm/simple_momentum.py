@@ -1,10 +1,12 @@
 """
-Simple Momentum Strategy for Competition
-Uses proven technical indicators instead of untrained ML models.
+Momentum Trend-Following Strategy for Competition
+PIVOTED: From counter-trend reversals to trend-following momentum
+Strategy: Ride the trend with tight stops for competition wins
 """
 import numpy as np
 from typing import Dict, Optional, Tuple
 from loguru import logger
+from alphagenesis.features.momentum_hybrid_engine import MomentumHybridEngine
 
 
 class SimpleMomentumStrategy:
@@ -17,6 +19,8 @@ class SimpleMomentumStrategy:
     """
 
     def __init__(self):
+        # PIVOTED: Use momentum hybrid engine for trend-following
+        self.momentum_engine = MomentumHybridEngine()
         self.rsi_period = 14
         self.rsi_oversold = 30
         self.rsi_overbought = 70
@@ -55,107 +59,27 @@ class SimpleMomentumStrategy:
         symbol: str
     ) -> Optional[Dict]:
         """
-        Generate trading signal based on momentum.
+        Generate trading signal - PIVOTED TO MOMENTUM TREND-FOLLOWING.
+
+        NEW STRATEGY:
+        - Ride uptrends (RSI > 55, EMA20 > EMA50)
+        - Ride downtrends (RSI < 45, EMA20 < EMA50)
+        - Tight stops (0.5-1%), quick profits (1.5-2.5%)
+        - Only rare extreme reversals (RSI < 20 or > 80)
 
         Returns:
             Dict with direction and confidence, or None if no signal
         """
         try:
-            # Extract close prices from candles
-            closes = []
-            for c in candles:
-                if isinstance(c, dict):
-                    closes.append(float(c.get('close', 0)))
-                elif isinstance(c, list) and len(c) >= 5:
-                    closes.append(float(c[4]))
+            # Use the momentum hybrid engine for signal generation
+            signal = self.momentum_engine.generate_signal(
+                candles=candles,
+                current_price=current_price,
+                symbol=symbol,
+                model_confidence=0.6  # Can be replaced with actual ML model output
+            )
 
-            if len(closes) < 50:
-                return None
-
-            prices = np.array(closes)
-
-            # Calculate indicators
-            rsi = self.calculate_rsi(prices)
-            ma_fast = self.calculate_ma(prices, self.ma_fast)
-            ma_slow = self.calculate_ma(prices, self.ma_slow)
-
-            # Calculate momentum
-            momentum = (prices[-1] - prices[-10]) / prices[-10] * 100
-
-            # Price position relative to moving averages
-            price_above_ma = current_price > ma_fast and current_price > ma_slow
-            price_below_ma = current_price < ma_fast and current_price < ma_slow
-
-            # MA crossover
-            ma_bullish = ma_fast > ma_slow
-            ma_bearish = ma_fast < ma_slow
-
-            logger.info(f"{symbol} - RSI: {rsi:.1f}, MA Fast: {ma_fast:.2f}, MA Slow: {ma_slow:.2f}, Momentum: {momentum:.2f}%")
-
-            # REVERSAL SIGNALS - Extreme RSI overrides everything
-            # When RSI is VERY oversold/overbought, market often reverses
-            if rsi < 30:  # Extremely oversold - buy the dip!
-                confidence = min(0.85, (30 - rsi) / 20)
-                logger.info(f"🟢 REVERSAL LONG signal for {symbol}: RSI extremely oversold at {rsi:.1f}")
-                return {
-                    'direction': 'LONG',
-                    'confidence': confidence,
-                    'reason': f'RSI={rsi:.1f} extremely oversold - reversal play'
-                }
-
-            if rsi > 70:  # Extremely overbought - short the top!
-                confidence = min(0.85, (rsi - 70) / 20)
-                logger.info(f"🔴 REVERSAL SHORT signal for {symbol}: RSI extremely overbought at {rsi:.1f}")
-                return {
-                    'direction': 'SHORT',
-                    'confidence': confidence,
-                    'reason': f'RSI={rsi:.1f} extremely overbought - reversal play'
-                }
-
-            # LONG signals (original logic)
-            if (rsi < self.rsi_oversold and
-                ma_bullish and
-                momentum < -3 and
-                price_below_ma):
-                confidence = min(0.8, (self.rsi_oversold - rsi) / 20)
-                logger.info(f"🟢 LONG signal for {symbol}: RSI oversold + bullish MA + negative momentum")
-                return {
-                    'direction': 'LONG',
-                    'confidence': confidence,
-                    'reason': f'RSI={rsi:.1f} oversold, bullish MA cross, momentum={momentum:.1f}%'
-                }
-
-            # SHORT signals (original logic)
-            if (rsi > self.rsi_overbought and
-                ma_bearish and
-                momentum > 3 and
-                price_above_ma):
-                confidence = min(0.8, (rsi - self.rsi_overbought) / 20)
-                logger.info(f"🔴 SHORT signal for {symbol}: RSI overbought + bearish MA + positive momentum")
-                return {
-                    'direction': 'SHORT',
-                    'confidence': confidence,
-                    'reason': f'RSI={rsi:.1f} overbought, bearish MA cross, momentum={momentum:.1f}%'
-                }
-
-            # Strong momentum plays (regardless of RSI)
-            if abs(momentum) > 10:
-                if momentum > 10 and ma_bullish and rsi < 80:
-                    logger.info(f"🚀 Strong LONG momentum for {symbol}: {momentum:.1f}%")
-                    return {
-                        'direction': 'LONG',
-                        'confidence': 0.7,
-                        'reason': f'Strong upward momentum {momentum:.1f}%'
-                    }
-                elif momentum < -10 and ma_bearish and rsi > 20:
-                    logger.info(f"📉 Strong SHORT momentum for {symbol}: {momentum:.1f}%")
-                    return {
-                        'direction': 'SHORT',
-                        'confidence': 0.7,
-                        'reason': f'Strong downward momentum {momentum:.1f}%'
-                    }
-
-            return None
+            return signal
 
         except Exception as e:
             logger.error(f"Error generating signal for {symbol}: {e}")
@@ -166,26 +90,38 @@ class SimpleMomentumStrategy:
         entry_price: float,
         current_price: float,
         direction: str,
-        time_held_minutes: int
+        time_held_minutes: int,
+        stop_loss_pct: float = 0.008,  # Competition: tighter 0.8% stop
+        take_profit_pct: float = 0.02   # Competition: quick 2% profit
     ) -> Tuple[bool, str]:
         """
-        Determine if we should close a position.
+        COMPETITION-OPTIMIZED EXIT LOGIC.
+        Tight stops, quick profits, many small wins.
 
         Returns:
             (should_close, reason)
         """
-        pnl_pct = ((current_price - entry_price) / entry_price * 100) if direction == 'LONG' else ((entry_price - current_price) / entry_price * 100)
+        pnl_pct = ((current_price - entry_price) / entry_price) if direction == 'LONG' else ((entry_price - current_price) / entry_price)
 
-        # Take profit at 5%
-        if pnl_pct > 5:
-            return True, f"Take profit at {pnl_pct:.1f}%"
+        # Quick take profit (1.5-2.5%)
+        if pnl_pct > take_profit_pct:
+            return True, f"✅ Take profit at {pnl_pct*100:.2f}%"
 
-        # Stop loss at -2%
-        if pnl_pct < -2:
-            return True, f"Stop loss at {pnl_pct:.1f}%"
+        # Tight stop loss (0.5-1%)
+        if pnl_pct < -stop_loss_pct:
+            return True, f"❌ Stop loss at {pnl_pct*100:.2f}%"
 
-        # Time-based exit if not profitable after 30 minutes
-        if time_held_minutes > 30 and pnl_pct < 0.5:
-            return True, f"Time exit after {time_held_minutes}min with {pnl_pct:.1f}% P&L"
+        # Trailing stop: If we're up 1%, trail by 0.5%
+        if pnl_pct > 0.01:
+            if pnl_pct < 0.005:  # Dropped from +1% to +0.5%
+                return True, f"📉 Trailing stop at {pnl_pct*100:.2f}%"
+
+        # Time-based exit: Close break-even or small loss after 45min
+        if time_held_minutes > 45 and pnl_pct < 0.005:
+            return True, f"⏰ Time exit after {time_held_minutes}min with {pnl_pct*100:.2f}% P&L"
+
+        # Emergency time exit: Force close after 90min regardless
+        if time_held_minutes > 90:
+            return True, f"⏱️ Max hold time exit: {time_held_minutes}min, P&L: {pnl_pct*100:.2f}%"
 
         return False, ""

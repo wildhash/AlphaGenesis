@@ -41,6 +41,7 @@ from alphagenesis.features import (
 from alphagenesis.models import LSTMModel, TransformerModel, EnsemblePredictor
 from alphagenesis.risk import RiskManager
 from alphagenesis.risk.circuit_breaker import CircuitBreaker
+from alphagenesis.execution.position_ledger import PositionLedger
 
 
 class SDMTradingEngine:
@@ -123,6 +124,10 @@ class SDMTradingEngine:
         # Simple momentum strategy (proven indicators, not untrained ML)
         self.momentum_strategy = SimpleMomentumStrategy()
         logger.info("✓ Momentum strategy initialized (RSI, MA, momentum-based)")
+
+        # CRITICAL: Position Ledger - Single Source of Truth for Conflict Prevention
+        self.position_ledger = PositionLedger(ledger_path="/tmp/position_ledger.json")
+        logger.info("✓ Position Ledger initialized - conflict prevention active")
 
         # State
         self.is_running = False
@@ -228,7 +233,14 @@ class SDMTradingEngine:
                 if self.learning_engine.should_adapt():
                     self.learning_engine.adapt(self.intent_graph, self.binding_layer)
 
-                # Step 6: Log status
+                # Step 6: Reconcile position ledger (every 10 iterations)
+                if self.iteration % 10 == 0:
+                    ledger_ok = self._reconcile_position_ledger()
+                    if not ledger_ok:
+                        logger.critical("Ledger reconciliation failed - stopping trading")
+                        break
+
+                # Step 7: Log status
                 self._log_sdm_status()
 
                 # Sleep until next iteration
@@ -450,9 +462,9 @@ class SDMTradingEngine:
         if not signal:
             return {'direction': 'HOLD', 'confidence': 0.0}
 
-        # Position sizing - AGGRESSIVE for competition
-        # Use 15% of capital per trade to avoid margin issues with multiple signals
-        position_size_pct = 0.15  # Balanced: aggressive but allows multiple concurrent trades
+        # Position sizing - COMPETITION-OPTIMIZED for many small wins
+        # Use 10% of capital per trade with tight stops for high win rate
+        position_size_pct = 0.10  # Smaller positions, more trades, tight risk management
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
@@ -512,6 +524,19 @@ class SDMTradingEngine:
                 logger.warning(f"Position size too small after rounding, skipping trade")
                 return
 
+            # CRITICAL: Check Position Ledger for conflicts BEFORE placing order
+            can_open, conflict_reason = self.position_ledger.can_open_position(
+                symbol=symbol,
+                side=action['direction']
+            )
+
+            if not can_open:
+                logger.warning(f"🚫 POSITION LEDGER BLOCKED TRADE: {conflict_reason}")
+                logger.warning(f"   This prevents self-hedging on {symbol}")
+                return
+
+            logger.info(f"✓ Position ledger check passed - no conflicts detected")
+
             # Place order
             result = self.weex.place_order(
                 symbol=symbol,
@@ -526,6 +551,20 @@ class SDMTradingEngine:
             if not success and 'margin' in str(result).lower():
                 logger.warning(f"⚠ Insufficient margin for {symbol}, will try next signal")
                 return
+
+            # CRITICAL: Record position in ledger AFTER successful order placement
+            if success:
+                position_recorded = self.position_ledger.open_position(
+                    symbol=symbol,
+                    side=action['direction'],
+                    size=action['position_size'],
+                    entry_price=action['entry_price']
+                )
+
+                if not position_recorded:
+                    logger.error(f"⚠️ Order placed but ledger failed to record - INVESTIGATE!")
+                else:
+                    logger.info(f"✓ Position recorded in ledger: {action['direction']} {symbol}")
 
             # Record feedback
             feedback = PerformanceFeedback(
@@ -554,6 +593,51 @@ class SDMTradingEngine:
 
         except Exception as e:
             logger.error(f"Error executing action: {e}", exc_info=True)
+
+    def _reconcile_position_ledger(self) -> bool:
+        """
+        Reconcile position ledger with exchange state.
+
+        Returns:
+            True if ledger matches exchange, False if mismatch detected
+        """
+        try:
+            # Fetch current positions from exchange
+            account = self.weex.get_account()
+
+            if 'position' not in account:
+                logger.info("No positions on exchange to reconcile")
+                return True
+
+            # Convert WEEX positions to ledger format
+            exchange_positions = []
+            for pos in account['position']:
+                size = float(pos.get('size', 0))
+                if size > 0:  # Only active positions
+                    # WEEX uses numeric side: 1=LONG, 2=SHORT
+                    side_num = int(pos.get('side', 1))
+                    side_str = 'LONG' if side_num == 1 else 'SHORT'
+
+                    exchange_positions.append({
+                        'symbol': pos['symbol'],
+                        'side': side_str,
+                        'size': size
+                    })
+
+            # Reconcile with ledger
+            is_consistent = self.position_ledger.reconcile_with_exchange(exchange_positions)
+
+            if not is_consistent:
+                logger.critical("❌ LEDGER MISMATCH - ENTERING SAFE MODE")
+                logger.critical("   System will HALT new trades until manual reconciliation")
+                self.is_running = False  # Stop trading
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error during ledger reconciliation: {e}", exc_info=True)
+            return False
 
     def _close_all_positions(self):
         """Close all open positions."""
