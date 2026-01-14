@@ -316,7 +316,7 @@ class WEEXClient:
         Returns:
             stepSize for the symbol
         """
-        # Common stepSize values for WEEX futures
+        # Common stepSize values for WEEX futures (from API error messages)
         step_sizes = {
             'cmt_btcusdt': 0.001,
             'cmt_ethusdt': 0.01,
@@ -324,7 +324,7 @@ class WEEXClient:
             'cmt_dogeusdt': 1.0,
             'cmt_xrpusdt': 1.0,
             'cmt_adausdt': 1.0,
-            'cmt_bnbusdt': 0.01,
+            'cmt_bnbusdt': 0.1,  # Fixed: API requires 0.1, not 0.01
             'cmt_ltcusdt': 0.1,
         }
         return step_sizes.get(symbol, 0.1)  # Default to 0.1 if unknown
