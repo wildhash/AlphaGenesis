@@ -451,10 +451,23 @@ class SDMTradingEngine:
             return {'direction': 'HOLD', 'confidence': 0.0}
 
         # Position sizing - AGGRESSIVE for competition
-        # Use 40% of capital per trade with higher leverage for faster gains
-        position_size_pct = 0.40  # Increased from 10% to 40%
+        # Use 15% of capital per trade to avoid margin issues with multiple signals
+        position_size_pct = 0.15  # Balanced: aggressive but allows multiple concurrent trades
         position_value = context['balance'] * position_size_pct
         size = position_value / price
+
+        # Pre-round size to avoid precision issues - defensive measure
+        # WEEX requires sizes to match stepSize increments
+        import decimal
+        step_sizes = {
+            'cmt_btcusdt': 0.001, 'cmt_ethusdt': 0.01, 'cmt_solusdt': 0.1,
+            'cmt_dogeusdt': 1.0, 'cmt_xrpusdt': 1.0, 'cmt_adausdt': 1.0,
+            'cmt_bnbusdt': 0.01, 'cmt_ltcusdt': 0.1
+        }
+        step = step_sizes.get(symbol, 0.1)
+        d_size = decimal.Decimal(str(size))
+        d_step = decimal.Decimal(str(step))
+        size = float((d_size // d_step) * d_step)
 
         return {
             'symbol': symbol,
@@ -494,6 +507,11 @@ class SDMTradingEngine:
             else:
                 return
 
+            # Skip if position size is too small after rounding
+            if action['position_size'] <= 0:
+                logger.warning(f"Position size too small after rounding, skipping trade")
+                return
+
             # Place order
             result = self.weex.place_order(
                 symbol=symbol,
@@ -503,6 +521,11 @@ class SDMTradingEngine:
             )
 
             success = 'order_id' in result or 'client_oid' in result
+
+            # Handle insufficient margin errors gracefully
+            if not success and 'margin' in str(result).lower():
+                logger.warning(f"⚠ Insufficient margin for {symbol}, will try next signal")
+                return
 
             # Record feedback
             feedback = PerformanceFeedback(
