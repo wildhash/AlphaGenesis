@@ -43,6 +43,7 @@ from alphagenesis.risk import RiskManager
 from alphagenesis.risk.circuit_breaker import CircuitBreaker
 from alphagenesis.risk.risk_manager_veto import RiskManagerVeto, AccountState, TradeIntent, VetoReason
 from alphagenesis.execution.position_ledger import PositionLedger
+from alphagenesis.execution.position_monitor import PositionMonitor
 from alphagenesis.learning import DecisionJournal, DecisionTick, TradeEvent, ContextualBanditAllocator
 
 
@@ -161,6 +162,16 @@ class SDMTradingEngine:
         )
         logger.info("✓ Bandit Allocator initialized - online learning active")
 
+        # PHASE 2: Position Monitor - Auto-Close Detection
+        self.position_monitor = PositionMonitor(
+            weex_client=self.weex,
+            position_ledger=self.position_ledger,
+            decision_journal=self.journal,
+            bandit_allocator=self.bandit,
+            poll_interval_seconds=30
+        )
+        logger.info("✓ Position Monitor initialized - will start with engine")
+
         # DRY RUN MODE
         self.dry_run_mode = os.getenv('DRY_RUN', 'false').lower() == 'true'
         if self.dry_run_mode:
@@ -231,6 +242,10 @@ class SDMTradingEngine:
         logger.info("="*70 + "\n")
 
         self.is_running = True
+
+        # Start position monitor in background
+        self.position_monitor.start()
+
         self._run_dataflow_loop()
 
     def stop(self):
@@ -239,6 +254,11 @@ class SDMTradingEngine:
         self.is_running = False
 
         try:
+            # Stop position monitor
+            if hasattr(self, 'position_monitor'):
+                self.position_monitor.stop()
+                logger.info("✓ Position monitor stopped")
+
             # Close journal database connection
             if hasattr(self, 'journal'):
                 self.journal.close()
