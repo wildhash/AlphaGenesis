@@ -439,8 +439,8 @@ class IntentGraph:
                 Constraint(
                     name="min_confidence",
                     constraint_type=ConstraintType.SOFT,
-                    value=0.6,
-                    penalty=5.0,
+                    value=0.1,  # LOWERED for competition - allow more trades
+                    penalty=1.0,  # Reduced penalty from 5.0 to 1.0
                     description="Minimum signal confidence"
                 ),
                 Constraint(
