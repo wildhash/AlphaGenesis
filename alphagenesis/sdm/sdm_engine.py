@@ -41,7 +41,10 @@ from alphagenesis.features import (
 from alphagenesis.models import LSTMModel, TransformerModel, EnsemblePredictor
 from alphagenesis.risk import RiskManager
 from alphagenesis.risk.circuit_breaker import CircuitBreaker
+from alphagenesis.risk.risk_manager_veto import RiskManagerVeto, AccountState, TradeIntent, VetoReason
 from alphagenesis.execution.position_ledger import PositionLedger
+from alphagenesis.execution.position_monitor import PositionMonitor
+from alphagenesis.learning import DecisionJournal, DecisionTick, TradeEvent, ContextualBanditAllocator
 
 
 class SDMTradingEngine:
@@ -129,6 +132,51 @@ class SDMTradingEngine:
         self.position_ledger = PositionLedger(ledger_path="/tmp/position_ledger.json")
         logger.info("✓ Position Ledger initialized - conflict prevention active")
 
+        # PHASE 2: Risk Manager - Final Veto Authority
+        self.risk_manager = RiskManagerVeto(
+            initial_balance=initial_capital,
+            max_notional_per_symbol=2000.0,
+            max_total_notional=5000.0,
+            max_leverage=15.0,
+            max_margin_ratio=0.80,
+            max_daily_loss_pct=0.10,
+            max_total_drawdown_pct=0.25,
+            max_per_trade_risk_pct=0.01,  # 1% per trade (conservative)
+            min_risk_reward_ratio=1.5,
+            fee_churn_threshold=-0.01,
+            fee_churn_lookback=10
+        )
+        logger.info("✓ Risk Manager initialized - final veto authority active")
+
+        # PHASE 2: Decision Journal - Training Data Collection
+        self.journal = DecisionJournal(db_path="/tmp/trading_journal.db")
+        logger.info("✓ Decision Journal initialized - logging all decisions")
+
+        # PHASE 2: Contextual Bandit - Online Strategy Selection
+        self.bandit = ContextualBanditAllocator(
+            strategies=['momentum', 'flat'],  # Start with 2, add more later
+            algorithm='ucb',
+            exploration_rate=0.2,
+            ucb_c=2.0,
+            state_path="/tmp/bandit_state.json"
+        )
+        logger.info("✓ Bandit Allocator initialized - online learning active")
+
+        # PHASE 2: Position Monitor - Auto-Close Detection
+        self.position_monitor = PositionMonitor(
+            weex_client=self.weex,
+            position_ledger=self.position_ledger,
+            decision_journal=self.journal,
+            bandit_allocator=self.bandit,
+            poll_interval_seconds=30
+        )
+        logger.info("✓ Position Monitor initialized - will start with engine")
+
+        # DRY RUN MODE
+        self.dry_run_mode = os.getenv('DRY_RUN', 'false').lower() == 'true'
+        if self.dry_run_mode:
+            logger.warning("🟡 DRY RUN MODE ACTIVE - No real orders will be placed")
+
         # State
         self.is_running = False
         self.positions: Dict[str, Any] = {}
@@ -136,6 +184,8 @@ class SDMTradingEngine:
         self.total_pnl = 0.0
         self.daily_trades = 0
         self.last_trade_time = None
+        self.peak_balance_today = initial_capital
+        self.daily_pnl = 0.0
 
         # Symbols to trade (all approved WEEX AI Wars pairs)
         self.symbols = [
@@ -173,9 +223,13 @@ class SDMTradingEngine:
         logger.info("Models registered with semantic binding layer")
 
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals."""
-        logger.warning(f"Received signal {signum}, initiating shutdown...")
+        """Handle shutdown signals cleanly."""
+        signal_name = 'SIGINT' if signum == signal.SIGINT else 'SIGTERM'
+        logger.warning(f"Received {signal_name} ({signum}), initiating clean shutdown...")
         self.stop()
+        # Force exit after stop completes
+        import sys
+        sys.exit(0)
 
     def start(self):
         """Start the SDM trading engine."""
@@ -188,15 +242,44 @@ class SDMTradingEngine:
         logger.info("="*70 + "\n")
 
         self.is_running = True
+
+        # Start position monitor in background
+        self.position_monitor.start()
+
         self._run_dataflow_loop()
 
     def stop(self):
-        """Stop the SDM trading engine."""
+        """Stop the SDM trading engine cleanly."""
         logger.info("Stopping SDM Trading Engine...")
         self.is_running = False
-        self._close_all_positions()
-        self._export_results()
-        logger.info("SDM Engine stopped.")
+
+        try:
+            # Stop position monitor
+            if hasattr(self, 'position_monitor'):
+                self.position_monitor.stop()
+                logger.info("✓ Position monitor stopped")
+
+            # Close journal database connection
+            if hasattr(self, 'journal'):
+                self.journal.close()
+                logger.info("✓ Journal closed")
+
+            # Export final results
+            self._export_results()
+
+            # Save final state
+            if hasattr(self, 'position_ledger'):
+                self.position_ledger._save(force=True)
+                logger.info("✓ Ledger saved")
+
+            if hasattr(self, 'bandit'):
+                self.bandit._save_state()
+                logger.info("✓ Bandit state saved")
+
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+
+        logger.info("SDM Engine stopped cleanly.")
 
     def _run_dataflow_loop(self):
         """
@@ -435,10 +518,12 @@ class SDMTradingEngine:
         context: Dict
     ) -> Optional[Dict]:
         """
-        Generate a proposed action using momentum strategy.
+        Generate a proposed action using bandit-selected strategy.
 
-        Uses proven technical indicators (RSI, MA, momentum) instead of
-        untrained ML models for reliable signals.
+        PHASE 2 PIPELINE:
+        1. Bandit selects strategy for (symbol, regime)
+        2. Generate signal using selected strategy
+        3. Build trade intent with features
         """
         # Get current price
         try:
@@ -450,21 +535,35 @@ class SDMTradingEngine:
         except:
             return None
 
-        # Fetch candles for momentum strategy
+        # Fetch candles for strategy
         try:
             candles = self.weex.get_candles(symbol=symbol, interval='1H', limit=100)
         except:
             return None
 
-        # Generate signal using momentum strategy
-        signal = self.momentum_strategy.generate_signal(candles, price, symbol)
+        # PHASE 2: Bandit selects strategy
+        regime_str = regime.value if hasattr(regime, 'value') else str(regime)
+        chosen_strategy = self.bandit.select_strategy(symbol, regime_str)
+
+        logger.debug(f"Bandit selected strategy: {chosen_strategy} for {symbol} in {regime_str}")
+
+        # Generate signal using chosen strategy
+        if chosen_strategy == 'flat':
+            # Bandit learned best action is no action
+            return {'direction': 'HOLD', 'confidence': 0.0, 'strategy': 'flat'}
+        elif chosen_strategy == 'momentum':
+            signal = self.momentum_strategy.generate_signal(candles, price, symbol)
+        else:
+            # Fallback to momentum if strategy not implemented yet
+            signal = self.momentum_strategy.generate_signal(candles, price, symbol)
+            chosen_strategy = 'momentum'
 
         if not signal:
             return {'direction': 'HOLD', 'confidence': 0.0}
 
-        # Position sizing - COMPETITION-OPTIMIZED for many small wins
-        # Use 10% of capital per trade with tight stops for high win rate
-        position_size_pct = 0.10  # Smaller positions, more trades, tight risk management
+        # Position sizing - ULTRA-CONSERVATIVE for margin constraints
+        # Use 1% of capital per trade to ensure orders FILL
+        position_size_pct = 0.01  # Micro-positions to fit available margin
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
@@ -481,15 +580,24 @@ class SDMTradingEngine:
         d_step = decimal.Decimal(str(step))
         size = float((d_size // d_step) * d_step)
 
+        # Extract features for journal logging
+        features = signal.get('features', {})
+
         return {
             'symbol': symbol,
             'direction': signal['direction'],
             'confidence': signal['confidence'],
             'entry_price': price,
             'position_size': size,
-            'max_leverage': 15.0,  # Increased from 10x to 15x
+            'max_leverage': 15.0,
             'risk_reward_ratio': 3.0,
-            'reason': signal.get('reason', '')
+            'reason': signal.get('reason', ''),
+            'strategy': chosen_strategy,
+            'regime': regime_str,
+            'stop_loss': signal.get('stop_loss'),
+            'take_profit': signal.get('take_profit'),
+            # Features for journal
+            'features': features
         }
 
     def _execute_action(
@@ -499,17 +607,30 @@ class SDMTradingEngine:
         intent_id: str,
         model_type: ModelType
     ):
-        """Execute a trading action."""
+        """
+        PHASE 2 EXECUTION PIPELINE - Execute trading action with full guardrails.
+
+        Pipeline order (NON-NEGOTIABLE):
+        1. Build TradeIntent
+        2. Position Ledger gate
+        3. Risk Manager veto
+        4. Decision Journal log (ALWAYS, even if blocked)
+        5. Execute order (if gates pass and not DRY_RUN)
+        6. Update ledger + journal after execution
+        """
         try:
             logger.info(f"\n{'*'*60}")
-            logger.info(f"EXECUTING ACTION via SDM")
-            logger.info(f"Intent: {intent_id}")
-            logger.info(f"Model: {model_type.value}")
-            logger.info(f"Symbol: {symbol}")
+            logger.info(f"PHASE 2 EXECUTION PIPELINE - {symbol}")
+            logger.info(f"Strategy: {action.get('strategy', 'unknown')}")
             logger.info(f"Direction: {action['direction']}")
             logger.info(f"Size: {action.get('position_size', 0):.6f}")
             logger.info(f"Price: ${action.get('entry_price', 0):.2f}")
+            logger.info(f"Confidence: {action.get('confidence', 0.0):.2f}")
             logger.info(f"{'*'*60}")
+
+            # Skip HOLD signals
+            if action['direction'] == 'HOLD':
+                return
 
             # Map direction to WEEX side
             if action['direction'] == 'LONG':
@@ -519,80 +640,214 @@ class SDMTradingEngine:
             else:
                 return
 
-            # Skip if position size is too small after rounding
+            # Skip if position size too small
             if action['position_size'] <= 0:
-                logger.warning(f"Position size too small after rounding, skipping trade")
+                logger.warning(f"Position size too small after rounding, skipping")
                 return
 
-            # CRITICAL: Check Position Ledger for conflicts BEFORE placing order
-            can_open, conflict_reason = self.position_ledger.can_open_position(
+            # === STEP 1: Build TradeIntent ===
+            trade_intent = TradeIntent(
+                symbol=symbol,
+                side=action['direction'],
+                size=action['position_size'],
+                entry_price=action['entry_price'],
+                stop_loss=action.get('stop_loss'),
+                take_profit=action.get('take_profit'),
+                confidence=action.get('confidence', 0.5)
+            )
+
+            # === STEP 2: Position Ledger Gate ===
+            ledger_approved, ledger_reason = self.position_ledger.can_open_position(
                 symbol=symbol,
                 side=action['direction']
             )
 
-            if not can_open:
-                logger.warning(f"🚫 POSITION LEDGER BLOCKED TRADE: {conflict_reason}")
-                logger.warning(f"   This prevents self-hedging on {symbol}")
-                return
+            if not ledger_approved:
+                logger.warning(f"🚫 LEDGER BLOCKED: {ledger_reason}")
 
-            logger.info(f"✓ Position ledger check passed - no conflicts detected")
+            # === STEP 3: Risk Manager Veto ===
+            risk_approved = True
+            veto_reasons = []
 
-            # Place order
-            result = self.weex.place_order(
+            if ledger_approved:  # Only check risk if ledger passed
+                # Build account state
+                account_state = AccountState(
+                    balance=self.current_capital,
+                    equity=self.current_capital,
+                    margin_used=0.0,  # TODO: calculate from positions
+                    unrealized_pnl=0.0,
+                    daily_pnl=self.daily_pnl,
+                    peak_balance_today=self.peak_balance_today,
+                    total_notional=0.0  # TODO: sum from positions
+                )
+
+                risk_approved, veto_reasons = self.risk_manager.approve(
+                    trade_intent,
+                    account_state,
+                    self.position_ledger.get_all_positions()
+                )
+
+                if not risk_approved:
+                    logger.error(f"❌ RISK VETO: {[v.message for v in veto_reasons]}")
+
+            # === STEP 4: Decision Journal - ALWAYS LOG ===
+            import json
+            features = action.get('features', {})
+
+            decision = DecisionTick(
+                timestamp=time.time(),
                 symbol=symbol,
-                side=side,
-                size=action['position_size'],
-                is_market=True
+                regime=action.get('regime', 'unknown'),
+                price=action['entry_price'],
+                # Features
+                rsi=features.get('rsi', 0.0),
+                ema_fast=features.get('ema_fast', 0.0),
+                ema_slow=features.get('ema_slow', 0.0),
+                volume=features.get('volume', 0.0),
+                volatility=features.get('volatility', 0.0),
+                # Signal
+                strategy_name=action.get('strategy', 'unknown'),
+                signal_direction=action['direction'],
+                signal_confidence=action.get('confidence', 0.0),
+                # Proposed action
+                proposed_side=action['direction'],
+                proposed_size=action['position_size'],
+                proposed_entry=action['entry_price'],
+                proposed_stop=action.get('stop_loss'),
+                proposed_take_profit=action.get('take_profit'),
+                # Gates
+                ledger_approved=ledger_approved,
+                ledger_reason=ledger_reason,
+                risk_approved=risk_approved,
+                risk_veto_reasons=json.dumps([{
+                    'rule': v.rule,
+                    'severity': v.severity,
+                    'message': v.message,
+                    'value': v.value,
+                    'limit': v.limit
+                } for v in veto_reasons]),
+                # Execution (to be updated)
+                executed=False,
+                execution_reason='pending'
             )
 
-            success = 'order_id' in result or 'client_oid' in result
+            # Determine if we can execute
+            can_execute = ledger_approved and risk_approved
 
-            # Handle insufficient margin errors gracefully
-            if not success and 'margin' in str(result).lower():
-                logger.warning(f"⚠ Insufficient margin for {symbol}, will try next signal")
+            # === STEP 5: Execute Order (if gates pass) ===
+            success = False
+            order_id = None
+            client_order_id = None
+
+            if not can_execute:
+                # Blocked by gates
+                if not ledger_approved:
+                    decision.executed = False
+                    decision.execution_reason = f'ledger_blocked: {ledger_reason}'
+                elif not risk_approved:
+                    decision.executed = False
+                    decision.execution_reason = f'risk_veto: {veto_reasons[0].rule if veto_reasons else "unknown"}'
+
+                self.journal.log_decision(decision)
                 return
 
-            # CRITICAL: Record position in ledger AFTER successful order placement
+            # Gates passed - execute or simulate
+            if self.dry_run_mode:
+                # DRY RUN: Simulate order
+                logger.info(f"🟡 DRY_RUN: Would place {action['direction']} order for {symbol}")
+
+                result = {
+                    'dry_run': True,
+                    'request': {
+                        'symbol': symbol,
+                        'side': side,
+                        'size': action['position_size']
+                    }
+                }
+                success = True  # Treat simulated orders as success
+                order_id = f"dry_run_{symbol}_{int(time.time())}"
+                client_order_id = order_id
+
+                decision.executed = False  # Not a real execution
+                decision.execution_reason = 'dry_run_simulated'
+                decision.order_id = order_id
+
+            else:
+                # LIVE: Place real order
+                result = self.weex.place_order(
+                    symbol=symbol,
+                    side=side,
+                    size=action['position_size'],
+                    is_market=True
+                )
+
+                success = 'order_id' in result or 'client_oid' in result
+
+                # DRY_RUN success override (from bug fix)
+                if isinstance(result, dict) and result.get('dry_run'):
+                    logger.info(f"🟡 DRY_RUN simulated order accepted: {result.get('request', {})}")
+                    success = True
+
+                if success:
+                    order_id = result.get('order_id') or result.get('client_oid')
+                    client_order_id = result.get('client_oid')
+
+                    decision.executed = True
+                    decision.execution_reason = 'order_placed'
+                    decision.order_id = order_id
+                else:
+                    # Order failed
+                    decision.executed = False
+                    decision.execution_reason = f"order_failed: {str(result)[:200]}"
+
+                    if 'margin' in str(result).lower():
+                        logger.warning(f"⚠ Insufficient margin for {symbol}")
+
+            # Log decision to journal
+            self.journal.log_decision(decision)
+
+            # === STEP 6: Update Ledger + Legacy Systems ===
             if success:
+                # Record in position ledger
                 position_recorded = self.position_ledger.open_position(
                     symbol=symbol,
                     side=action['direction'],
                     size=action['position_size'],
-                    entry_price=action['entry_price']
+                    entry_price=action['entry_price'],
+                    client_order_id=client_order_id,
+                    order_id=order_id
                 )
 
                 if not position_recorded:
-                    logger.error(f"⚠️ Order placed but ledger failed to record - INVESTIGATE!")
+                    logger.error(f"⚠️ Order placed but ledger failed to record!")
                 else:
-                    logger.info(f"✓ Position recorded in ledger: {action['direction']} {symbol}")
+                    logger.info(f"✓ Position recorded in ledger")
 
-            # Record feedback
-            feedback = PerformanceFeedback(
-                action_id=f"action_{self.iteration}_{symbol}",
-                intent_id=intent_id,
-                model_type=model_type.value,
-                timestamp=datetime.now(),
-                success=success,
-                pnl=0.0,  # Will be updated when position closes
-                fitness_score=action.get('confidence', 0.5),
-                context=action
-            )
+                # Legacy learning feedback
+                feedback = PerformanceFeedback(
+                    action_id=f"action_{self.iteration}_{symbol}",
+                    intent_id=intent_id,
+                    model_type=model_type.value,
+                    timestamp=datetime.now(),
+                    success=success,
+                    pnl=0.0,
+                    fitness_score=action.get('confidence', 0.5),
+                    context=action
+                )
+                self.learning_engine.record_feedback(feedback)
 
-            self.learning_engine.record_feedback(feedback)
+                # Intent graph feedback
+                fitness_scores = self.intent_graph.evaluate_proposed_action(action)
+                self.intent_graph.record_action_result(action, success, fitness_scores)
 
-            # Record in intent graph
-            fitness_scores = self.intent_graph.evaluate_proposed_action(action)
-            self.intent_graph.record_action_result(action, success, fitness_scores)
-
-            if success:
+                # Update counters
                 self.daily_trades += 1
                 self.last_trade_time = datetime.now()
-                logger.info(f"✓ Order placed successfully")
-            else:
-                logger.error(f"✗ Order failed: {result}")
+
+                logger.info(f"✓ Order executed successfully")
 
         except Exception as e:
-            logger.error(f"Error executing action: {e}", exc_info=True)
+            logger.error(f"Error in execution pipeline: {e}", exc_info=True)
 
     def _reconcile_position_ledger(self) -> bool:
         """
@@ -614,9 +869,15 @@ class SDMTradingEngine:
             for pos in account['position']:
                 size = float(pos.get('size', 0))
                 if size > 0:  # Only active positions
-                    # WEEX uses numeric side: 1=LONG, 2=SHORT
-                    side_num = int(pos.get('side', 1))
-                    side_str = 'LONG' if side_num == 1 else 'SHORT'
+                    # Handle both numeric (1/2) and string ("LONG"/"SHORT") side formats
+                    side_value = pos.get('side', 1)
+                    if isinstance(side_value, str):
+                        # String format: "LONG", "SHORT", "long", "short"
+                        side_str = side_value.upper()
+                    else:
+                        # Numeric format: 1=LONG, 2=SHORT
+                        side_num = int(side_value)
+                        side_str = 'LONG' if side_num == 1 else 'SHORT'
 
                     exchange_positions.append({
                         'symbol': pos['symbol'],
