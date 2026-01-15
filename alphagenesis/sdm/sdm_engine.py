@@ -561,9 +561,9 @@ class SDMTradingEngine:
         if not signal:
             return {'direction': 'HOLD', 'confidence': 0.0}
 
-        # Position sizing - COMPETITION-OPTIMIZED for many small wins
-        # Use 10% of capital per trade with tight stops for high win rate
-        position_size_pct = 0.10  # Smaller positions, more trades, tight risk management
+        # Position sizing - ULTRA-CONSERVATIVE for margin constraints
+        # Use 1% of capital per trade to ensure orders FILL
+        position_size_pct = 0.01  # Micro-positions to fit available margin
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
