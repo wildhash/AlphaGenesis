@@ -188,7 +188,9 @@ class SDMTradingEngine:
         self.daily_pnl = 0.0
         self.daily_start_balance = initial_capital  # CRITICAL: Track daily starting balance for % calculations
         self.daily_pnl_percent = 0.0  # Daily P&L as percentage of start balance
-        self.last_daily_reset_date = datetime.now().strftime('%Y-%m-%d')
+        # CRITICAL: Use UTC for daily reset to align with hackathon/competition limits
+        from datetime import timezone
+        self.last_daily_reset_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
         # Symbols to trade (all approved WEEX AI Wars pairs)
         self.symbols = [
@@ -343,11 +345,13 @@ class SDMTradingEngine:
         """
         Check if day changed and reset daily counters.
         CRITICAL for accurate daily P&L tracking.
+        Uses UTC to align with hackathon/competition limits.
         """
-        current_date = datetime.now().strftime('%Y-%m-%d')
+        from datetime import timezone
+        current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
         if current_date != self.last_daily_reset_date:
-            logger.info(f"🌅 Day changed from {self.last_daily_reset_date} to {current_date}")
+            logger.info(f"🌅 Day changed (UTC) from {self.last_daily_reset_date} to {current_date}")
             logger.info(f"   Previous day P&L: ${self.daily_pnl:+.2f} ({self.daily_pnl_percent:+.2%})")
 
             # Reset daily counters
@@ -388,25 +392,48 @@ class SDMTradingEngine:
 
             if 'position' in account:
                 for pos in account['position']:
-                    if float(pos.get('size', 0)) != 0:
-                        # Try multiple field names for unrealized P&L (WEEX API variations)
+                    position_size = float(pos.get('size', 0))
+                    if position_size != 0:
+                        # CRITICAL: Try ALL possible field names for unrealized P&L
+                        # Based on diagnostic script and known WEEX API variations
                         pnl_value = (
-                            pos.get('unrealized_profit') or  # From check_weex_account.py
-                            pos.get('unrealised_pnl') or     # From position_monitor.py (British spelling)
-                            pos.get('unrealizedProfit') or   # CamelCase variant
-                            pos.get('upnl') or               # Abbreviated
-                            pos.get('floating_pl') or        # Alternative name
+                            pos.get('unrealized_pnl') or      # snake_case American
+                            pos.get('unrealised_pnl') or      # snake_case British
+                            pos.get('unrealized_profit') or   # snake_case with 'profit'
+                            pos.get('unrealised_profit') or   # British with 'profit'
+                            pos.get('unrealizedPnl') or       # camelCase
+                            pos.get('unrealizedProfit') or    # camelCase with 'Profit'
+                            pos.get('upnl') or                # Abbreviated
+                            pos.get('floating_pl') or         # Alternative
+                            pos.get('floating_profit') or     # Alternative with 'profit'
                             0
                         )
-                        if pnl_value == 0 and not hasattr(self, '_warned_pnl_field'):
+                        if pnl_value == 0 and position_size != 0 and not hasattr(self, '_warned_pnl_field'):
                             logger.warning(f"⚠️ Could not find unrealized P&L field in position. Available keys: {list(pos.keys())}")
                             logger.warning(f"   Run diagnose_weex_fields.py to identify correct field name")
                             self._warned_pnl_field = True  # Only warn once
 
                         unrealized_pnl += float(pnl_value)
 
+                        # CRITICAL: Calculate open_value with fallback to size * mark_price
                         open_value = float(pos.get('open_value', 0))
-                        leverage = float(pos.get('leverage', 20))
+                        if open_value == 0:
+                            # Fallback: calculate from size and mark price
+                            mark_price = float(pos.get('mark_price', 0) or pos.get('markPrice', 0) or
+                                             pos.get('fair_price', 0) or pos.get('last_price', 0) or 0)
+                            if mark_price > 0:
+                                open_value = abs(position_size) * mark_price
+                            else:
+                                logger.warning(f"⚠️ Cannot calculate open_value for {pos.get('symbol')}: no open_value or mark_price")
+
+                        # CRITICAL: Guard against zero or missing leverage
+                        leverage = float(pos.get('leverage', 0))
+                        if leverage <= 0:
+                            leverage = 20.0  # Safe default
+                            if not hasattr(self, '_warned_leverage'):
+                                logger.warning(f"⚠️ Position has zero/missing leverage, using default 20x")
+                                self._warned_leverage = True
+
                         margin_used += open_value / leverage
                         total_notional += open_value
 
@@ -667,6 +694,46 @@ class SDMTradingEngine:
         # Extract features for journal logging
         features = signal.get('features', {})
 
+        # CRITICAL: Convert stop_loss_pct/take_profit_pct to absolute prices
+        # Signals emit percentages, but execution needs absolute prices
+        stop_loss = signal.get('stop_loss')  # Try absolute first
+        take_profit = signal.get('take_profit')  # Try absolute first
+
+        # If not absolute, convert from percentage
+        if stop_loss is None:
+            stop_loss_pct = signal.get('stop_loss_pct')
+            if stop_loss_pct is not None:
+                # Calculate absolute stop loss from percentage
+                if signal['direction'] == 'LONG':
+                    stop_loss = price * (1 - abs(stop_loss_pct))
+                else:  # SHORT
+                    stop_loss = price * (1 + abs(stop_loss_pct))
+
+        if take_profit is None:
+            take_profit_pct = signal.get('take_profit_pct')
+            if take_profit_pct is not None:
+                # Calculate absolute take profit from percentage
+                if signal['direction'] == 'LONG':
+                    take_profit = price * (1 + abs(take_profit_pct))
+                else:  # SHORT
+                    take_profit = price * (1 - abs(take_profit_pct))
+
+        # CRITICAL: Calculate ethics metrics for ethics engine checks
+        # These are required by ethics_engine.should_permit_action()
+        balance = context.get('balance', self.current_capital)
+
+        # Daily drawdown as percentage
+        daily_drawdown = abs(self.daily_pnl) / self.daily_start_balance if self.daily_start_balance > 0 and self.daily_pnl < 0 else 0.0
+
+        # Total drawdown as percentage
+        total_drawdown = max(0, (self.initial_capital - self.current_capital) / self.initial_capital)
+
+        # Position concentration (what % of capital is this trade)
+        position_concentration = (size * price) / balance if balance > 0 else 0.0
+
+        # Get open position count for concentration
+        open_positions = len([p for p in self.position_ledger.get_all_positions().values() if p.side != 'FLAT'])
+
         return {
             'symbol': symbol,
             'direction': signal['direction'],
@@ -678,8 +745,14 @@ class SDMTradingEngine:
             'reason': signal.get('reason', ''),
             'strategy': chosen_strategy,
             'regime': regime_str,
-            'stop_loss': signal.get('stop_loss'),
-            'take_profit': signal.get('take_profit'),
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            # Ethics metrics (required by ethics engine)
+            'daily_drawdown': daily_drawdown,
+            'total_drawdown': total_drawdown,
+            'position_concentration': position_concentration,
+            'daily_trade_count': self.daily_trades,
+            'open_position_count': open_positions,
             # Features for journal
             'features': features
         }
