@@ -389,7 +389,22 @@ class SDMTradingEngine:
             if 'position' in account:
                 for pos in account['position']:
                     if float(pos.get('size', 0)) != 0:
-                        unrealized_pnl += float(pos.get('unrealizedProfit', 0))
+                        # Try multiple field names for unrealized P&L (WEEX API variations)
+                        pnl_value = (
+                            pos.get('unrealized_profit') or  # From check_weex_account.py
+                            pos.get('unrealised_pnl') or     # From position_monitor.py (British spelling)
+                            pos.get('unrealizedProfit') or   # CamelCase variant
+                            pos.get('upnl') or               # Abbreviated
+                            pos.get('floating_pl') or        # Alternative name
+                            0
+                        )
+                        if pnl_value == 0 and not hasattr(self, '_warned_pnl_field'):
+                            logger.warning(f"⚠️ Could not find unrealized P&L field in position. Available keys: {list(pos.keys())}")
+                            logger.warning(f"   Run diagnose_weex_fields.py to identify correct field name")
+                            self._warned_pnl_field = True  # Only warn once
+
+                        unrealized_pnl += float(pnl_value)
+
                         open_value = float(pos.get('open_value', 0))
                         leverage = float(pos.get('leverage', 20))
                         margin_used += open_value / leverage
