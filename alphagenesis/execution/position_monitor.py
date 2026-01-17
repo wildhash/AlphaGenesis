@@ -90,8 +90,12 @@ class PositionMonitor:
                 size = float(pos.get('size', 0))
                 if size > 0:  # Only active positions
                     symbol = pos['symbol']
-                    side_num = int(pos.get('side', 1))
-                    side_str = 'LONG' if side_num == 1 else 'SHORT'
+                    side_value = pos.get('side', 1)
+                    if isinstance(side_value, str):
+                        side_str = side_value.upper()
+                    else:
+                        side_num = int(side_value)
+                        side_str = 'LONG' if side_num == 1 else 'SHORT'
 
                     exchange_map[symbol] = {
                         'side': side_str,

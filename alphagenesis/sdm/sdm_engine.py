@@ -17,7 +17,7 @@ Just continuous resolution under pressure.
 import os
 import time
 import signal
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 import numpy as np
 from loguru import logger
@@ -44,6 +44,7 @@ from alphagenesis.risk.circuit_breaker import CircuitBreaker
 from alphagenesis.risk.risk_manager_veto import RiskManagerVeto, AccountState, TradeIntent, VetoReason
 from alphagenesis.execution.position_ledger import PositionLedger
 from alphagenesis.execution.position_monitor import PositionMonitor
+from alphagenesis.execution.breakout_straddle import BreakoutStraddleManager
 from alphagenesis.learning import DecisionJournal, DecisionTick, TradeEvent, ContextualBanditAllocator
 
 
@@ -79,6 +80,7 @@ class SDMTradingEngine:
         """
         self.initial_capital = initial_capital
         self.current_capital = initial_capital
+        self.legacy_amount = initial_capital
         self.update_interval = update_interval
 
         # Initialize WEEX client
@@ -129,7 +131,8 @@ class SDMTradingEngine:
         logger.info("✓ Momentum strategy initialized (RSI, MA, momentum-based)")
 
         # CRITICAL: Position Ledger - Single Source of Truth for Conflict Prevention
-        self.position_ledger = PositionLedger(ledger_path="/tmp/position_ledger.json")
+        os.makedirs("/opt/AlphaGenesis/tmp", exist_ok=True)
+        self.position_ledger = PositionLedger(ledger_path="/opt/AlphaGenesis/tmp/position_ledger.json")
         logger.info("✓ Position Ledger initialized - conflict prevention active")
 
         # PHASE 2: Risk Manager - Final Veto Authority
@@ -177,6 +180,23 @@ class SDMTradingEngine:
         if self.dry_run_mode:
             logger.warning("🟡 DRY RUN MODE ACTIVE - No real orders will be placed")
 
+        # Breakout straddle manager (hedge mode)
+        self.straddle_manager = BreakoutStraddleManager(
+            weex_client=self.weex,
+            position_ledger=self.position_ledger,
+            straddle_risk=0.18,
+            breakout_pct=0.016,
+            trail_activation_pct=0.01,
+            trail_pct=0.006,
+            initial_stop_loss_pct=0.01,
+            max_hold_seconds=7200,
+            cooldown_seconds=45,
+            max_position_pct=0.25,
+            dry_run=self.dry_run_mode
+        )
+        self.straddle_confidence_threshold = 0.55
+        self._straddle_tick_seen = set()
+
         # State
         self.is_running = False
         self.positions: Dict[str, Any] = {}
@@ -186,11 +206,31 @@ class SDMTradingEngine:
         self.last_trade_time = None
         self.peak_balance_today = initial_capital
         self.daily_pnl = 0.0
-        self.daily_start_balance = initial_capital  # CRITICAL: Track daily starting balance for % calculations
-        self.daily_pnl_percent = 0.0  # Daily P&L as percentage of start balance
-        # CRITICAL: Use UTC for daily reset to align with hackathon/competition limits
-        from datetime import timezone
-        self.last_daily_reset_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        self.daily_pnl_percent = 0.0
+        self._daily_date = datetime.now(timezone.utc).date().isoformat()
+        self.daily_start_balance = initial_capital
+        self.daily_pause_until = 0.0
+        self.emergency_stop_active = False
+        self.test_override_used = False
+        self.start_time = time.time()
+        self.btc_only_period = 72 * 3600
+        self.btc_base_balance = None
+        self.gamma_squeeze_active = False
+        self.last_margin_used = 0.0
+        self.last_unrealized_pnl = 0.0
+        self.last_total_notional = 0.0
+        self._warned_pnl_field = False
+        self._warned_leverage_field = False
+
+        # Aggressive straddle controls (competition tuning)
+        self.stop_new_if_pnl_under = -0.06
+        self.emergency_stop_at = -0.08
+
+        # Symbol prioritization
+        self.priority_symbols = ["cmt_btcusdt"]
+        self.secondary_symbols = ["cmt_ethusdt", "cmt_solusdt"]
+        self.max_active_symbols = 1
+        self.active_symbols = ["cmt_btcusdt"]
 
         # Symbols to trade (all approved WEEX AI Wars pairs)
         self.symbols = [
@@ -310,6 +350,33 @@ class SDMTradingEngine:
 
                 # Step 3: Resolve Intent (Bind to execution)
                 active_intents = self.intent_graph.get_most_active_intents(top_k=3)
+                self._straddle_tick_seen = set()
+
+                if (
+                    self.dry_run_mode
+                    and self.iteration > 5
+                    and not self.test_override_used
+                    and len(self.straddle_manager.active_symbols()) == 0
+                ):
+                    symbol = self.active_symbols[0] if self.active_symbols else "cmt_btcusdt"
+                    try:
+                        ticker = self.weex.get_ticker(symbol)
+                        if 'data' in ticker:
+                            price = float(ticker['data'].get('last', 0))
+                        else:
+                            price = float(ticker.get('last', 0))
+                        if price > 0:
+                            logger.warning("🔧 DEBUG: FORCING TEST STRADDLE IN DRY_RUN")
+                            opened = self.straddle_manager.try_open(
+                                symbol=symbol,
+                                price=price,
+                                legacy_amount=self.legacy_amount
+                            )
+                            if opened:
+                                self.test_override_used = True
+                                logger.info(f"✅ TEST STRADDLE TRIGGERED: {symbol} @ {price:.2f}")
+                    except Exception as e:
+                        logger.warning(f"Test straddle open failed for {symbol}: {e}")
 
                 for intent_node in active_intents:
                     self._resolve_intent(intent_node, market_state)
@@ -341,28 +408,116 @@ class SDMTradingEngine:
                 logger.error(f"Error in dataflow loop: {e}", exc_info=True)
                 time.sleep(60)
 
-    def _check_and_reset_daily_counters(self):
-        """
-        Check if day changed and reset daily counters.
-        CRITICAL for accurate daily P&L tracking.
-        Uses UTC to align with hackathon/competition limits.
-        """
-        from datetime import timezone
-        current_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    def _extract_unrealized_pnl(self, pos: Dict[str, Any]) -> float:
+        keys = [
+            'unrealized_pnl',
+            'unrealised_pnl',
+            'unrealized_profit',
+            'unrealised_profit',
+            'unrealizedPnl',
+            'unrealisedPnl',
+            'unrealizedProfit',
+            'upnl',
+            'floating_profit',
+            'floating_pl',
+        ]
+        for key in keys:
+            if key in pos and pos[key] is not None:
+                try:
+                    return float(pos[key])
+                except (TypeError, ValueError):
+                    continue
 
-        if current_date != self.last_daily_reset_date:
-            logger.info(f"🌅 Day changed (UTC) from {self.last_daily_reset_date} to {current_date}")
-            logger.info(f"   Previous day P&L: ${self.daily_pnl:+.2f} ({self.daily_pnl_percent:+.2%})")
+        if not self._warned_pnl_field:
+            logger.warning(
+                "⚠️ Could not find unrealized P&L field in position. Available keys: %s",
+                list(pos.keys())
+            )
+            self._warned_pnl_field = True
+        return 0.0
 
-            # Reset daily counters
-            self.daily_start_balance = self.current_capital  # Today's baseline
-            self.daily_pnl = 0.0
-            self.daily_pnl_percent = 0.0
-            self.daily_trades = 0
-            self.peak_balance_today = self.current_capital
-            self.last_daily_reset_date = current_date
+    def _extract_mark_price(self, pos: Dict[str, Any]) -> float:
+        keys = [
+            'mark_price',
+            'markPrice',
+            'fair_price',
+            'fairPrice',
+            'last_price',
+            'last',
+            'index_price',
+            'open_price',
+            'entry_price',
+        ]
+        for key in keys:
+            if key in pos and pos[key] is not None:
+                try:
+                    price = float(pos[key])
+                except (TypeError, ValueError):
+                    continue
+                if price > 0:
+                    return price
+        return 0.0
 
-            logger.info(f"   Daily counters reset. New baseline: ${self.daily_start_balance:.2f}")
+    def _calculate_position_metrics(self, account: Dict[str, Any]) -> tuple[float, float, float]:
+        unrealized_pnl = 0.0
+        margin_used = 0.0
+        total_notional = 0.0
+
+        positions = account.get('position', [])
+        if not isinstance(positions, list):
+            return unrealized_pnl, margin_used, total_notional
+
+        for pos in positions:
+            try:
+                size = float(pos.get('size', 0) or 0)
+            except (TypeError, ValueError):
+                size = 0.0
+            if size == 0:
+                continue
+
+            unrealized_pnl += self._extract_unrealized_pnl(pos)
+
+            try:
+                notional = float(pos.get('open_value', 0) or 0)
+            except (TypeError, ValueError):
+                notional = 0.0
+
+            if notional == 0.0:
+                mark_price = self._extract_mark_price(pos)
+                if mark_price > 0:
+                    notional = abs(size) * mark_price
+
+            total_notional += notional
+
+            try:
+                leverage = float(pos.get('leverage', 20) or 20)
+            except (TypeError, ValueError):
+                leverage = 20.0
+            if leverage <= 0:
+                if not self._warned_leverage_field:
+                    logger.warning("⚠️ Invalid leverage on position; defaulting to 20x for margin calc")
+                    self._warned_leverage_field = True
+                leverage = 20.0
+            margin_used += notional / leverage
+
+        return unrealized_pnl, margin_used, total_notional
+
+    def _augment_action_with_risk_metrics(self, action: Dict[str, Any]):
+        trade_notional = action.get('position_size', 0.0) * action.get('entry_price', 0.0)
+        position_concentration = (
+            trade_notional / self.current_capital if self.current_capital > 0 else 0.0
+        )
+        total_drawdown = (
+            (self.initial_capital - self.current_capital) / self.initial_capital
+            if self.initial_capital > 0 else 0.0
+        )
+        action.update({
+            'daily_drawdown': max(0.0, -self.daily_pnl_percent),
+            'total_drawdown': max(0.0, total_drawdown),
+            'position_concentration': max(0.0, position_concentration),
+            'daily_trade_count': float(self.daily_trades),
+            'open_position_count': float(len(self.position_ledger.get_all_positions())),
+        })
 
     def _observe_market(self) -> Dict[str, Any]:
         """
@@ -370,9 +525,6 @@ class SDMTradingEngine:
 
         Data arrival creates pressure in the system.
         """
-        # Check for day change FIRST
-        self._check_and_reset_daily_counters()
-
         market_state = {
             'timestamp': datetime.now(),
             'symbols': {},
@@ -383,77 +535,8 @@ class SDMTradingEngine:
         try:
             account = self.weex.get_account()
             balance = self.weex.get_account_balance()
-
-            # Calculate total equity (balance + unrealized P&L)
-            equity = balance
-            unrealized_pnl = 0.0
-            margin_used = 0.0
-            total_notional = 0.0
-
-            if 'position' in account:
-                for pos in account['position']:
-                    position_size = float(pos.get('size', 0))
-                    if position_size != 0:
-                        # CRITICAL: Try ALL possible field names for unrealized P&L
-                        # Based on diagnostic script and known WEEX API variations
-                        pnl_value = (
-                            pos.get('unrealized_pnl') or      # snake_case American
-                            pos.get('unrealised_pnl') or      # snake_case British
-                            pos.get('unrealized_profit') or   # snake_case with 'profit'
-                            pos.get('unrealised_profit') or   # British with 'profit'
-                            pos.get('unrealizedPnl') or       # camelCase
-                            pos.get('unrealizedProfit') or    # camelCase with 'Profit'
-                            pos.get('upnl') or                # Abbreviated
-                            pos.get('floating_pl') or         # Alternative
-                            pos.get('floating_profit') or     # Alternative with 'profit'
-                            0
-                        )
-                        if pnl_value == 0 and position_size != 0 and not hasattr(self, '_warned_pnl_field'):
-                            logger.warning(f"⚠️ Could not find unrealized P&L field in position. Available keys: {list(pos.keys())}")
-                            logger.warning(f"   Run diagnose_weex_fields.py to identify correct field name")
-                            self._warned_pnl_field = True  # Only warn once
-
-                        unrealized_pnl += float(pnl_value)
-
-                        # CRITICAL: Calculate open_value with fallback to size * mark_price
-                        open_value = float(pos.get('open_value', 0))
-                        if open_value == 0:
-                            # Fallback: calculate from size and mark price
-                            mark_price = float(pos.get('mark_price', 0) or pos.get('markPrice', 0) or
-                                             pos.get('fair_price', 0) or pos.get('last_price', 0) or 0)
-                            if mark_price > 0:
-                                open_value = abs(position_size) * mark_price
-                            else:
-                                logger.warning(f"⚠️ Cannot calculate open_value for {pos.get('symbol')}: no open_value or mark_price")
-
-                        # CRITICAL: Guard against zero or missing leverage
-                        leverage = float(pos.get('leverage', 0))
-                        if leverage <= 0:
-                            leverage = 20.0  # Safe default
-                            if not hasattr(self, '_warned_leverage'):
-                                logger.warning(f"⚠️ Position has zero/missing leverage, using default 20x")
-                                self._warned_leverage = True
-
-                        margin_used += open_value / leverage
-                        total_notional += open_value
-
+            unrealized_pnl, margin_used, total_notional = self._calculate_position_metrics(account)
             equity = balance + unrealized_pnl
-
-            # CRITICAL: Calculate daily P&L as PERCENTAGE of daily start balance
-            self.current_capital = equity
-            self.daily_pnl = equity - self.daily_start_balance  # Dollar amount
-            self.daily_pnl_percent = self.daily_pnl / self.daily_start_balance if self.daily_start_balance > 0 else 0.0
-
-            # Update peak for drawdown tracking
-            if equity > self.peak_balance_today:
-                self.peak_balance_today = equity
-
-            # Store account data for risk calculations
-            self.last_account_data = account
-            self.last_margin_used = margin_used
-            self.last_unrealized_pnl = unrealized_pnl
-            self.last_total_notional = total_notional
-
             market_state['account'] = {
                 'balance': balance,
                 'equity': equity,
@@ -464,14 +547,34 @@ class SDMTradingEngine:
                 'daily_pnl_percent': self.daily_pnl_percent,
                 'pnl': equity - self.initial_capital
             }
+            self.current_capital = equity
+            self.legacy_amount = balance
+
+            today = datetime.now(timezone.utc).date().isoformat()
+            if today != self._daily_date:
+                self._daily_date = today
+                self.daily_start_balance = equity
+                self.daily_pnl = 0.0
+                self.daily_pnl_percent = 0.0
+                self.daily_pause_until = 0.0
+                self.emergency_stop_active = False
+            else:
+                self.daily_pnl = equity - self.daily_start_balance
+                self.daily_pnl_percent = (
+                    self.daily_pnl / self.daily_start_balance
+                    if self.daily_start_balance > 0 else 0.0
+                )
+            self.peak_balance_today = max(self.peak_balance_today, equity)
+            self.last_margin_used = margin_used
+            self.last_unrealized_pnl = unrealized_pnl
+            self.last_total_notional = total_notional
+            if hasattr(self, "straddle_manager"):
+                self.straddle_manager.set_daily_pnl(self.daily_pnl_percent)
+            self._update_symbol_selection(balance)
+            self._update_gamma_mode()
         except Exception as e:
             logger.error(f"Error fetching account: {e}")
             market_state['account'] = {'balance': self.current_capital}
-            # Initialize if not set
-            if not hasattr(self, 'last_margin_used'):
-                self.last_margin_used = 0.0
-                self.last_unrealized_pnl = 0.0
-                self.last_total_notional = 0.0
 
         # Update constraint propagator state
         self.constraint_propagator.update_state({
@@ -495,9 +598,60 @@ class SDMTradingEngine:
         logger.info(f"\n--- Resolving Intent: {intent.goal} ---")
         logger.info(f"Activation: {intent_node.activation_level:.2f}, Priority: {intent.priority:.1f}")
 
+        now = time.time()
+        if self.emergency_stop_active:
+            logger.critical("❌ EMERGENCY STOP ACTIVE - blocking all new actions")
+            return
+
+        if self.daily_pnl_percent <= self.emergency_stop_at:
+            logger.critical("❌ DAILY DRAWDOWN LIMIT HIT - STOPPING ALL STRATEGIES")
+            self.emergency_stop_active = True
+            self._close_all_positions()
+            return
+
+        if self.daily_pnl_percent <= self.stop_new_if_pnl_under:
+            if now >= self.daily_pause_until:
+                self.daily_pause_until = now + (4 * 60 * 60)
+                logger.warning("⚠ DAILY LOSS PAUSE - blocking new entries for 4h")
+            if now < self.daily_pause_until:
+                return
+
         # For each symbol, try to resolve intent
-        for symbol in self.symbols:
+        if self.active_symbols:
+            symbols_to_trade = [sym for sym in self.active_symbols if sym in self.symbols]
+        else:
+            ordered_symbols = []
+            for sym in self.priority_symbols:
+                if sym in self.symbols and sym not in ordered_symbols:
+                    ordered_symbols.append(sym)
+            for sym in self.secondary_symbols:
+                if sym in self.symbols and sym not in ordered_symbols:
+                    ordered_symbols.append(sym)
+            for sym in self.symbols:
+                if sym not in ordered_symbols:
+                    ordered_symbols.append(sym)
+
+            symbols_to_trade = ordered_symbols[:max(1, self.max_active_symbols)]
+
+        for symbol in symbols_to_trade:
             try:
+                if symbol not in self._straddle_tick_seen:
+                    try:
+                        ticker = self.weex.get_ticker(symbol)
+                        if 'data' in ticker:
+                            price = float(ticker['data'].get('last', 0))
+                        else:
+                            price = float(ticker.get('last', 0))
+                        if price > 0:
+                            self.straddle_manager.update(symbol, price)
+                    except Exception as e:
+                        logger.warning(f"Straddle update failed for {symbol}: {e}")
+                    self._straddle_tick_seen.add(symbol)
+
+                if self.straddle_manager.is_blocked(symbol):
+                    logger.info(f"⏸ STRADDLE ACTIVE - skipping normal strategy for {symbol}")
+                    continue
+
                 # Determine market regime
                 regime = self._detect_regime_for_symbol(symbol)
 
@@ -528,11 +682,18 @@ class SDMTradingEngine:
                 if not proposed_action or proposed_action.get('direction') == 'HOLD':
                     continue
 
+                self._augment_action_with_risk_metrics(proposed_action)
+
                 # Evaluate action against intent graph
                 should_execute, reasoning = self.intent_graph.should_execute_action(proposed_action)
 
                 if not should_execute:
                     logger.info(f"Intent graph rejected: {reasoning}")
+                    self._log_straddle_signal_debug(
+                        symbol=symbol,
+                        action=proposed_action,
+                        intent_graph_blocked=True
+                    )
                     continue
 
                 # Apply constraint propagation (shape action via fields)
@@ -674,7 +835,7 @@ class SDMTradingEngine:
 
         # Position sizing - ULTRA-CONSERVATIVE for margin constraints
         # Use 1% of capital per trade to ensure orders FILL
-        position_size_pct = 0.01  # Micro-positions to fit available margin
+        position_size_pct = 0.03  # Micro-positions to fit available margin
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
@@ -694,45 +855,20 @@ class SDMTradingEngine:
         # Extract features for journal logging
         features = signal.get('features', {})
 
-        # CRITICAL: Convert stop_loss_pct/take_profit_pct to absolute prices
-        # Signals emit percentages, but execution needs absolute prices
-        stop_loss = signal.get('stop_loss')  # Try absolute first
-        take_profit = signal.get('take_profit')  # Try absolute first
-
-        # If not absolute, convert from percentage
-        if stop_loss is None:
-            stop_loss_pct = signal.get('stop_loss_pct')
-            if stop_loss_pct is not None:
-                # Calculate absolute stop loss from percentage
-                if signal['direction'] == 'LONG':
-                    stop_loss = price * (1 - abs(stop_loss_pct))
-                else:  # SHORT
-                    stop_loss = price * (1 + abs(stop_loss_pct))
-
-        if take_profit is None:
-            take_profit_pct = signal.get('take_profit_pct')
-            if take_profit_pct is not None:
-                # Calculate absolute take profit from percentage
-                if signal['direction'] == 'LONG':
-                    take_profit = price * (1 + abs(take_profit_pct))
-                else:  # SHORT
-                    take_profit = price * (1 - abs(take_profit_pct))
-
-        # CRITICAL: Calculate ethics metrics for ethics engine checks
-        # These are required by ethics_engine.should_permit_action()
-        balance = context.get('balance', self.current_capital)
-
-        # Daily drawdown as percentage
-        daily_drawdown = abs(self.daily_pnl) / self.daily_start_balance if self.daily_start_balance > 0 and self.daily_pnl < 0 else 0.0
-
-        # Total drawdown as percentage
-        total_drawdown = max(0, (self.initial_capital - self.current_capital) / self.initial_capital)
-
-        # Position concentration (what % of capital is this trade)
-        position_concentration = (size * price) / balance if balance > 0 else 0.0
-
-        # Get open position count for concentration
-        open_positions = len([p for p in self.position_ledger.get_all_positions().values() if p.side != 'FLAT'])
+        stop_loss = signal.get('stop_loss')
+        take_profit = signal.get('take_profit')
+        stop_loss_pct = signal.get('stop_loss_pct')
+        take_profit_pct = signal.get('take_profit_pct')
+        if stop_loss is None and stop_loss_pct:
+            if signal['direction'] == 'LONG':
+                stop_loss = price * (1 - stop_loss_pct)
+            else:
+                stop_loss = price * (1 + stop_loss_pct)
+        if take_profit is None and take_profit_pct:
+            if signal['direction'] == 'LONG':
+                take_profit = price * (1 + take_profit_pct)
+            else:
+                take_profit = price * (1 - take_profit_pct)
 
         return {
             'symbol': symbol,
@@ -747,12 +883,6 @@ class SDMTradingEngine:
             'regime': regime_str,
             'stop_loss': stop_loss,
             'take_profit': take_profit,
-            # Ethics metrics (required by ethics engine)
-            'daily_drawdown': daily_drawdown,
-            'total_drawdown': total_drawdown,
-            'position_concentration': position_concentration,
-            'daily_trade_count': self.daily_trades,
-            'open_position_count': open_positions,
             # Features for journal
             'features': features
         }
@@ -787,6 +917,27 @@ class SDMTradingEngine:
 
             # Skip HOLD signals
             if action['direction'] == 'HOLD':
+                return
+
+            self._log_straddle_signal_debug(
+                symbol=symbol,
+                action=action,
+                intent_graph_blocked=False
+            )
+
+            if self.straddle_manager.is_blocked(symbol):
+                logger.info(f"⏸ STRADDLE ACTIVE - skipping execution for {symbol}")
+                return
+
+            if action.get('confidence', 0.0) >= self.straddle_confidence_threshold:
+                opened = self.straddle_manager.try_open(
+                    symbol=symbol,
+                    price=action.get('entry_price', 0.0),
+                    legacy_amount=self.legacy_amount
+                )
+                if opened:
+                    return
+                logger.warning(f"⚠ STRADDLE NOT OPENED - skipping normal execution for {symbol}")
                 return
 
             # Map direction to WEEX side
@@ -1037,6 +1188,33 @@ class SDMTradingEngine:
         except Exception as e:
             logger.error(f"Error in execution pipeline: {e}", exc_info=True)
 
+    def _log_straddle_signal_debug(self, symbol: str, action: Dict, intent_graph_blocked: bool):
+        """Log detailed signal info for straddle debugging."""
+        confidence = action.get('confidence', 0.0)
+        direction = action.get('direction', 'UNKNOWN')
+        active_straddles = len(self.straddle_manager.active_symbols())
+        threshold = self.straddle_confidence_threshold
+        logger.info(
+            "📡 SIGNAL DEBUG: %s | Action: %s | Confidence: %.2f | Threshold: %.2f | Active Straddles: %d | "
+            "Blocked by Intent Graph: %s",
+            symbol,
+            direction,
+            confidence,
+            threshold,
+            active_straddles,
+            intent_graph_blocked
+        )
+
+        price = action.get('entry_price', 0.0)
+        if price > 0:
+            atr_ratio = self.straddle_manager.get_atr_ratio(symbol, price)
+            logger.info(
+                "📈 VOLATILITY: %s ATR ratio: %.2f | Normal volatility: %s",
+                symbol,
+                atr_ratio,
+                atr_ratio > 0.7
+            )
+
     def _reconcile_position_ledger(self) -> bool:
         """
         Reconcile position ledger with exchange state.
@@ -1052,9 +1230,15 @@ class SDMTradingEngine:
                 logger.info("No positions on exchange to reconcile")
                 return True
 
+            active_straddles = set()
+            if hasattr(self, 'straddle_manager'):
+                active_straddles = self.straddle_manager.active_symbols()
+
             # Convert WEEX positions to ledger format
             exchange_positions = []
             for pos in account['position']:
+                if pos.get('symbol') in active_straddles:
+                    continue
                 size = float(pos.get('size', 0))
                 if size > 0:  # Only active positions
                     # Handle both numeric (1/2) and string ("LONG"/"SHORT") side formats
@@ -1095,8 +1279,123 @@ class SDMTradingEngine:
     def _close_all_positions(self):
         """Close all open positions."""
         logger.info("Closing all positions...")
-        # Implementation similar to legacy engine
-        pass
+        try:
+            account = self.weex.get_account()
+            positions = account.get('position', [])
+            if not positions:
+                logger.info("No open positions to close")
+                return
+
+            for pos in positions:
+                size = float(pos.get('size', 0))
+                if size <= 0:
+                    continue
+
+                symbol = pos.get('symbol')
+                side_value = pos.get('side', 1)
+                if isinstance(side_value, str):
+                    side_str = side_value.upper()
+                else:
+                    side_str = 'LONG' if int(side_value) == 1 else 'SHORT'
+
+                close_side = 3 if side_str == 'LONG' else 4
+
+                if self.dry_run_mode:
+                    logger.info(f"🟡 DRY_RUN: Would close {side_str} {symbol} size={size}")
+                    continue
+
+                result = self.weex.place_order(
+                    symbol=symbol,
+                    side=close_side,
+                    size=size,
+                    is_market=True
+                )
+                logger.info(f"Close order result for {symbol}: {result}")
+        except Exception as e:
+            logger.error(f"Failed closing positions: {e}", exc_info=True)
+
+    def _update_symbol_selection(self, balance: float):
+        """After 72h, conditionally add ETH if BTC performed >12%."""
+        if self.btc_base_balance is None:
+            self.btc_base_balance = balance
+
+        elapsed = time.time() - self.start_time
+        if elapsed < self.btc_only_period:
+            self.active_symbols = ["cmt_btcusdt"]
+            return
+
+        if self.btc_base_balance <= 0:
+            return
+
+        btc_performance = (balance - self.btc_base_balance) / self.btc_base_balance
+        if btc_performance > 0.12 and "cmt_ethusdt" not in self.active_symbols:
+            self.active_symbols.append("cmt_ethusdt")
+            logger.info(f"✅ BTC performance {btc_performance*100:.1f}% > 12% - ADDING ETH")
+            logger.info(f"🔀 Active symbols: {self.active_symbols}")
+
+    def _update_gamma_mode(self):
+        """Detect gamma squeeze and toggle high-volatility parameters."""
+        symbol = self.active_symbols[0] if self.active_symbols else "cmt_btcusdt"
+        gamma = self._detect_gamma_squeeze(symbol)
+        if gamma != self.gamma_squeeze_active:
+            self.gamma_squeeze_active = gamma
+            if hasattr(self, "straddle_manager"):
+                self.straddle_manager.set_gamma_mode(gamma)
+
+    def _detect_gamma_squeeze(self, symbol: str) -> bool:
+        """
+        Proxy gamma squeeze detection using price acceleration + volume spike.
+        Funding rate is not available in the current WEEX client.
+        """
+        try:
+            candles = self.weex.get_candles(symbol=symbol, interval="1m", limit=60)
+            if isinstance(candles, dict) and "data" in candles:
+                data = candles["data"]
+            else:
+                data = candles
+
+            if not isinstance(data, list) or len(data) < 10:
+                return False
+
+            closes = []
+            volumes = []
+            for c in data:
+                if isinstance(c, dict):
+                    closes.append(float(c.get("close", 0)))
+                    volumes.append(float(c.get("volume", 0)))
+                elif isinstance(c, list) and len(c) >= 6:
+                    closes.append(float(c[4]))
+                    volumes.append(float(c[5]))
+
+            if len(closes) < 6 or len(volumes) < 6:
+                return False
+
+            ref = closes[-6]
+            if ref <= 0:
+                return False
+            recent_return = (closes[-1] - ref) / ref
+            price_acceleration = abs(recent_return) > 0.02
+
+            recent_volume = sum(volumes[-5:])
+            prior_volume = sum(volumes[:-5])
+            if prior_volume <= 0:
+                return False
+            avg_prior = prior_volume / max(1, (len(volumes) - 5))
+            volume_ratio = recent_volume / (avg_prior * 5) if avg_prior > 0 else 0.0
+            volume_spike = volume_ratio > 10
+
+            gamma_squeeze = price_acceleration and volume_spike
+            if gamma_squeeze:
+                logger.warning(
+                    "⚠️ GAMMA SQUEEZE DETECTED: %s | Accel: %.2f%% | Volume: %.1fx",
+                    symbol,
+                    recent_return * 100,
+                    volume_ratio
+                )
+            return gamma_squeeze
+        except Exception as e:
+            logger.warning(f"Gamma squeeze detection failed for {symbol}: {e}")
+            return False
 
     def _log_sdm_status(self):
         """Log SDM system status."""
