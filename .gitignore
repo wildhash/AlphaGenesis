@@ -156,6 +156,9 @@ checkpoints/
 logs/
 *.log
 
+# Reports (runtime output)
+reports/
+
 # Temporary files
 tmp/
 temp/
