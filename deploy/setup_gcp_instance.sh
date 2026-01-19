@@ -125,14 +125,22 @@ echo -e "${GREEN}Step 7: Installing Python Dependencies${NC}"
 echo "----------------------------------------------------------------------"
 
 echo "This may take a few minutes..."
-su - $SERVICE_USER -c "cd $PROJECT_DIR && export PATH='/home/alphagenesis/.local/bin:$PATH' && poetry install --no-dev" || {
+su - $SERVICE_USER -c "cd $PROJECT_DIR && export PATH='/home/alphagenesis/.local/bin:$PATH' && poetry install --no-dev --no-root" || {
     echo -e "${YELLOW}⚠${NC} Poetry install failed, trying pip install..."
     su - $SERVICE_USER -c "cd $PROJECT_DIR && pip3 install -r requirements.txt" || {
         echo -e "${RED}✗${NC} Dependency installation failed"
         echo "Installing critical dependencies manually..."
-        pip3 install numpy pandas loguru python-dotenv requests scikit-learn
+        pip3 install numpy pandas loguru python-dotenv requests scikit-learn gymnasium matplotlib plotly arch
     }
 }
+
+# Verify critical packages are installed
+echo "Verifying critical packages..."
+su - $SERVICE_USER -c "cd $PROJECT_DIR && export PATH='/home/alphagenesis/.local/bin:$PATH' && poetry run python -c 'import gymnasium; import matplotlib; import plotly; import arch; print(\"✓ All critical packages verified\")'" || {
+    echo -e "${YELLOW}⚠${NC} Some packages missing, installing via poetry..."
+    su - $SERVICE_USER -c "cd $PROJECT_DIR && export PATH='/home/alphagenesis/.local/bin:$PATH' && poetry add gymnasium matplotlib plotly arch --no-interaction"
+}
+
 echo -e "${GREEN}✓${NC} Dependencies installed"
 echo ""
 

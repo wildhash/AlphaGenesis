@@ -454,6 +454,15 @@ class SDMTradingEngine:
             self.last_unrealized_pnl = unrealized_pnl
             self.last_total_notional = total_notional
 
+            # VALIDATION LOGGING: Log key metrics for hackathon verification
+            if self.iteration % 10 == 0:  # Every 10 iterations to avoid spam
+                logger.info(f"📊 VALIDATION METRICS:")
+                logger.info(f"   unrealized_pnl: ${unrealized_pnl:+.2f}")
+                logger.info(f"   total_notional: ${total_notional:.2f}")
+                logger.info(f"   margin_used: ${margin_used:.2f}")
+                logger.info(f"   daily_pnl: ${self.daily_pnl:+.2f} ({self.daily_pnl_percent:+.2%})")
+                logger.info(f"   equity: ${equity:.2f}")
+
             market_state['account'] = {
                 'balance': balance,
                 'equity': equity,
@@ -700,6 +709,8 @@ class SDMTradingEngine:
         take_profit = signal.get('take_profit')  # Try absolute first
 
         # If not absolute, convert from percentage
+        sl_converted = False
+        tp_converted = False
         if stop_loss is None:
             stop_loss_pct = signal.get('stop_loss_pct')
             if stop_loss_pct is not None:
@@ -708,6 +719,7 @@ class SDMTradingEngine:
                     stop_loss = price * (1 - abs(stop_loss_pct))
                 else:  # SHORT
                     stop_loss = price * (1 + abs(stop_loss_pct))
+                sl_converted = True
 
         if take_profit is None:
             take_profit_pct = signal.get('take_profit_pct')
@@ -717,6 +729,16 @@ class SDMTradingEngine:
                     take_profit = price * (1 + abs(take_profit_pct))
                 else:  # SHORT
                     take_profit = price * (1 - abs(take_profit_pct))
+                tp_converted = True
+
+        # VALIDATION LOGGING: Log SL/TP conversion for hackathon verification
+        if sl_converted or tp_converted:
+            logger.info(f"🎯 SL/TP CONVERSION: {symbol} {signal['direction']}")
+            logger.info(f"   Entry price: ${price:.2f}")
+            if sl_converted:
+                logger.info(f"   Stop Loss: {signal.get('stop_loss_pct', 0):.1%} → ${stop_loss:.2f}")
+            if tp_converted:
+                logger.info(f"   Take Profit: {signal.get('take_profit_pct', 0):.1%} → ${take_profit:.2f}")
 
         # CRITICAL: Calculate ethics metrics for ethics engine checks
         # These are required by ethics_engine.should_permit_action()
@@ -733,6 +755,14 @@ class SDMTradingEngine:
 
         # Get open position count for concentration
         open_positions = len([p for p in self.position_ledger.get_all_positions().values() if p.side != 'FLAT'])
+
+        # VALIDATION LOGGING: Log ethics metrics for hackathon verification
+        logger.info(f"📋 ETHICS METRICS INJECTED:")
+        logger.info(f"   daily_drawdown: {daily_drawdown:.2%}")
+        logger.info(f"   total_drawdown: {total_drawdown:.2%}")
+        logger.info(f"   position_concentration: {position_concentration:.2%}")
+        logger.info(f"   daily_trade_count: {self.daily_trades}")
+        logger.info(f"   open_position_count: {open_positions}")
 
         return {
             'symbol': symbol,
@@ -819,8 +849,11 @@ class SDMTradingEngine:
                 side=action['direction']
             )
 
-            if not ledger_approved:
-                logger.warning(f"🚫 LEDGER BLOCKED: {ledger_reason}")
+            # VALIDATION LOGGING: Log ledger gate decision
+            if ledger_approved:
+                logger.info(f"✅ LEDGER GATE: PASSED")
+            else:
+                logger.warning(f"🚫 LEDGER GATE: BLOCKED - {ledger_reason}")
 
             # === STEP 2.5: HARD CAP - 30% Gross Exposure Limit ===
             # This is a NON-NEGOTIABLE safety limit applied BEFORE risk manager
@@ -844,7 +877,10 @@ class SDMTradingEngine:
                         f"(current: ${total_notional:.2f}, new trade: ${trade_notional:.2f}, "
                         f"total: ${new_gross_notional:.2f}, balance: ${self.current_capital:.2f})"
                     )
-                    logger.error(f"❌ {gross_exposure_reason}")
+                    logger.error(f"❌ GROSS EXPOSURE CHECK: BLOCKED - {gross_exposure_reason}")
+                else:
+                    # VALIDATION LOGGING: Log gross exposure check passed
+                    logger.info(f"✅ GROSS EXPOSURE CHECK: PASSED ({gross_exposure_pct:.1%} < {MAX_GROSS_EXPOSURE_PCT:.1%})")
 
             # === STEP 3: Risk Manager Veto ===
             risk_approved = True
@@ -872,8 +908,11 @@ class SDMTradingEngine:
                     self.position_ledger.get_all_positions()
                 )
 
-                if not risk_approved:
-                    logger.error(f"❌ RISK VETO: {[v.message for v in veto_reasons]}")
+                # VALIDATION LOGGING: Log risk manager decision
+                if risk_approved:
+                    logger.info(f"✅ RISK MANAGER VETO: PASSED")
+                else:
+                    logger.error(f"❌ RISK MANAGER VETO: BLOCKED - {[v.message for v in veto_reasons]}")
 
             # === STEP 4: Decision Journal - ALWAYS LOG ===
             import json
