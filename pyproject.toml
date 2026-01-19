@@ -22,7 +22,6 @@ keras = "^2.13.0"
 
 # Machine Learning - Reinforcement Learning
 stable-baselines3 = "^2.0.0"
-gym = "^0.26.0"
 gymnasium = "^0.28.0"
 
 # Machine Learning - Traditional ML
@@ -66,6 +65,11 @@ pytz = "^2023.3"
 tqdm = "^4.65.0"
 joblib = "^1.3.0"
 
+# Visualization (needed for production metrics reporting)
+matplotlib = "^3.7.0"
+seaborn = "^0.12.0"
+plotly = "^5.15.0"
+
 [tool.poetry.group.dev.dependencies]
 # Testing
 pytest = "^7.4.0"
@@ -89,9 +93,6 @@ sphinx-rtd-theme = "^1.2.0"
 # Jupyter
 jupyter = "^1.0.0"
 ipykernel = "^6.24.0"
-matplotlib = "^3.7.0"
-seaborn = "^0.12.0"
-plotly = "^5.15.0"
 
 [tool.poetry.extras]
 talib = ["ta-lib"]

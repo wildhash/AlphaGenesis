@@ -6,8 +6,8 @@ Implements RL-based trading agents using various algorithms
 """
 
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 
