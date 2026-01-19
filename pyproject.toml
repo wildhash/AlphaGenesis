@@ -18,7 +18,6 @@ scipy = "^1.10.0"
 torch = "^2.0.0"
 transformers = "^4.30.0"
 tensorflow = "^2.13.0"
-keras = "^2.13.0"
 
 # Machine Learning - Reinforcement Learning
 stable-baselines3 = "^2.0.0"
