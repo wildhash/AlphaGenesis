@@ -48,6 +48,7 @@ class WEEXClient:
     CURRENT_ORDERS_ENDPOINT = "/capi/v2/order/current"
     ORDER_HISTORY_ENDPOINT = "/capi/v2/order/history"
     TRADE_FILLS_ENDPOINT = "/capi/v2/order/fills"
+    UPLOAD_AI_LOG_ENDPOINT = "/capi/v2/order/uploadAiLog"
 
     def __init__(
         self,
@@ -461,22 +462,73 @@ class WEEXClient:
         return self._request("GET", self.ORDER_HISTORY_ENDPOINT, params=params, signed=True)
     
     def get_trade_fills(
-        self, 
+        self,
         symbol: str = "cmt_btcusdt",
         page_size: int = 50
     ) -> Dict[str, Any]:
         """
         Get trade fill details.
-        
+
         Args:
             symbol: Trading pair
             page_size: Number of fills to return
-            
+
         Returns:
             List of trade fills with P&L
         """
         params = {"symbol": symbol, "pageSize": page_size}
         return self._request("GET", self.TRADE_FILLS_ENDPOINT, params=params, signed=True)
+
+    def upload_ai_log(
+        self,
+        stage: str,
+        model: str,
+        input_data: Dict[str, Any],
+        output_data: Dict[str, Any],
+        explanation: str,
+        order_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Upload AI log for hackathon compliance verification.
+
+        Required to prove AI involvement in trading decisions.
+
+        Args:
+            stage: Trading stage where AI participated
+                   (e.g., "Strategy Generation", "Decision Making")
+            model: AI model name/version (e.g., "AlphaGenesis-SDM", "GPT-4")
+            input_data: JSON dict of prompt/query/data given to AI model
+            output_data: JSON dict of AI model's generated output/predictions
+            explanation: Natural language summary of AI reasoning (max 1000 chars)
+            order_id: Optional order ID from WEEX order API
+
+        Returns:
+            Upload result with code "00000" on success
+        """
+        # Truncate explanation to 1000 chars as per API spec
+        if len(explanation) > 1000:
+            explanation = explanation[:997] + "..."
+
+        data = {
+            "stage": stage,
+            "model": model,
+            "input": input_data,
+            "output": output_data,
+            "explanation": explanation
+        }
+
+        if order_id is not None:
+            data["orderId"] = order_id
+
+        logger.info(f"Uploading AI log: stage={stage}, model={model}")
+        result = self._request("POST", self.UPLOAD_AI_LOG_ENDPOINT, data=data, signed=True)
+
+        if result.get("code") == "00000":
+            logger.info("AI log uploaded successfully")
+        else:
+            logger.error(f"AI log upload failed: {result}")
+
+        return result
 
     # =========================================================================
     # CONVENIENCE METHODS
