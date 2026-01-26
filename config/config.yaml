@@ -16,14 +16,14 @@ trading:
   timeframe: 1h
   lookback_period: 100
 
-# Risk Management
+# Risk Management - COMPETITION SETTINGS
 risk:
-  max_position_size: 0.1
-  max_leverage: 3.0
-  stop_loss_percent: 0.02
-  take_profit_percent: 0.05
+  max_position_size: 0.30  # INCREASED: 30% for competition (was 10%)
+  max_leverage: 10.0  # INCREASED: 10x for competition (was 3x)
+  stop_loss_percent: 0.018  # WIDENED: 1.8% (was 2%)
+  take_profit_percent: 0.035  # WIDENED: 3.5% (was 5%)
   var_confidence_level: 0.95
-  max_drawdown_limit: 0.15
+  max_drawdown_limit: 0.20  # LOOSENED: 20% (was 15%)
 
 # Model Configuration
 model:

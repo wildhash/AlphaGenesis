@@ -122,19 +122,19 @@ class MomentumHybridEngine:
             logger.info(f"{symbol} - RSI: {rsi:.1f}, EMA20: {ema_fast:.2f}, EMA50: {ema_slow:.2f}, Momentum: {momentum_pct:.2f}%")
 
             # === UPTREND MOMENTUM LONG ===
-            # Enter when trend is UP and RSI confirms strength (not overbought yet)
+            # LOOSENED: Enter when trend is UP - removed strict RSI and price filters
+            # More aggressive for competition: catch the trend early
             if (trend_up and
-                rsi > 55 and rsi < 75 and  # Strong but not extreme
-                current_price > ema_fast and
-                momentum_pct > 1.0):  # Positive momentum
+                rsi > 45 and rsi < 78 and  # LOOSENED: from 55 to 45
+                momentum_pct > 0.3):  # LOOSENED: from 1.0% to 0.3%
 
                 # Confidence scales with signal strength
-                base_confidence = min(0.4 + (rsi - 55) / 50, 0.75)
+                base_confidence = min(0.45 + (rsi - 45) / 60, 0.80)  # Higher base confidence
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
 
-                # Dynamic risk based on ATR
-                stop_loss_pct = max(0.005, (atr / current_price) * 0.6)  # 0.5-1%
-                take_profit_pct = stop_loss_pct * 2.5  # 2.5:1 R/R
+                # WIDENED stops for crypto volatility
+                stop_loss_pct = max(0.015, (atr / current_price) * 1.0)  # 1.5-2.5%
+                take_profit_pct = stop_loss_pct * 2.0  # 2:1 R/R (faster exits)
 
                 logger.info(f"📈 MOMENTUM LONG for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
 
@@ -147,17 +147,18 @@ class MomentumHybridEngine:
                 }
 
             # === DOWNTREND MOMENTUM SHORT ===
-            # Enter when trend is DOWN and RSI confirms weakness (not oversold yet)
+            # LOOSENED: Enter when trend is DOWN - removed strict RSI and price filters
+            # More aggressive for competition: catch the trend early
             if (trend_down and
-                rsi < 45 and rsi > 25 and  # Weak but not extreme
-                current_price < ema_fast and
-                momentum_pct < -1.0):  # Negative momentum
+                rsi < 55 and rsi > 22 and  # LOOSENED: from 45 to 55
+                momentum_pct < -0.3):  # LOOSENED: from -1.0% to -0.3%
 
-                base_confidence = min(0.4 + (45 - rsi) / 50, 0.75)
+                base_confidence = min(0.45 + (55 - rsi) / 60, 0.80)  # Higher base confidence
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
 
-                stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
-                take_profit_pct = stop_loss_pct * 2.5
+                # WIDENED stops for crypto volatility
+                stop_loss_pct = max(0.015, (atr / current_price) * 1.0)  # 1.5-2.5%
+                take_profit_pct = stop_loss_pct * 2.0  # 2:1 R/R (faster exits)
 
                 logger.info(f"📉 MOMENTUM SHORT for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
 

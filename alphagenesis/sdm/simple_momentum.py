@@ -91,37 +91,37 @@ class SimpleMomentumStrategy:
         current_price: float,
         direction: str,
         time_held_minutes: int,
-        stop_loss_pct: float = 0.008,  # Competition: tighter 0.8% stop
-        take_profit_pct: float = 0.02   # Competition: quick 2% profit
+        stop_loss_pct: float = 0.018,  # WIDENED: 1.8% stop (was 0.8%)
+        take_profit_pct: float = 0.035  # WIDENED: 3.5% profit (was 2%)
     ) -> Tuple[bool, str]:
         """
-        COMPETITION-OPTIMIZED EXIT LOGIC.
-        Tight stops, quick profits, many small wins.
+        COMPETITION-OPTIMIZED EXIT LOGIC - REVISED.
+        Wider stops to survive volatility, let winners run longer.
 
         Returns:
             (should_close, reason)
         """
         pnl_pct = ((current_price - entry_price) / entry_price) if direction == 'LONG' else ((entry_price - current_price) / entry_price)
 
-        # Quick take profit (1.5-2.5%)
+        # Take profit at 3.5% (let winners run)
         if pnl_pct > take_profit_pct:
             return True, f"✅ Take profit at {pnl_pct*100:.2f}%"
 
-        # Tight stop loss (0.5-1%)
+        # Stop loss at 1.8% (survive normal volatility)
         if pnl_pct < -stop_loss_pct:
             return True, f"❌ Stop loss at {pnl_pct*100:.2f}%"
 
-        # Trailing stop: If we're up 1%, trail by 0.5%
-        if pnl_pct > 0.01:
-            if pnl_pct < 0.005:  # Dropped from +1% to +0.5%
+        # Trailing stop: If we're up 2%, trail by 1%
+        if pnl_pct > 0.02:
+            if pnl_pct < 0.01:  # Dropped from +2% to +1%
                 return True, f"📉 Trailing stop at {pnl_pct*100:.2f}%"
 
-        # Time-based exit: Close break-even or small loss after 45min
-        if time_held_minutes > 45 and pnl_pct < 0.005:
+        # Time-based exit: Close break-even or small loss after 90min (was 45min)
+        if time_held_minutes > 90 and pnl_pct < 0.01:
             return True, f"⏰ Time exit after {time_held_minutes}min with {pnl_pct*100:.2f}% P&L"
 
-        # Emergency time exit: Force close after 90min regardless
-        if time_held_minutes > 90:
+        # Emergency time exit: Force close after 180min regardless (was 90min)
+        if time_held_minutes > 180:
             return True, f"⏱️ Max hold time exit: {time_held_minutes}min, P&L: {pnl_pct*100:.2f}%"
 
         return False, ""

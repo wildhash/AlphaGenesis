@@ -65,7 +65,7 @@ class SDMTradingEngine:
         api_secret: Optional[str] = None,
         api_passphrase: Optional[str] = None,
         initial_capital: float = 1000.0,
-        update_interval: int = 300,  # 5 minutes
+        update_interval: int = 180,  # FASTER: 3 minutes (was 5 minutes)
     ):
         """
         Initialize SDM Trading Engine.
@@ -120,8 +120,8 @@ class SDMTradingEngine:
         self.technical = TechnicalIndicators()
         self.circuit_breaker = CircuitBreaker(
             max_leverage=20.0,
-            max_daily_drawdown=0.10,
-            max_total_drawdown=0.25
+            max_daily_drawdown=0.15,  # LOOSENED: 15% (was 10%)
+            max_total_drawdown=0.30  # LOOSENED: 30% (was 25%)
         )
 
         # Simple momentum strategy (proven indicators, not untrained ML)
@@ -132,18 +132,18 @@ class SDMTradingEngine:
         self.position_ledger = PositionLedger(ledger_path="/tmp/position_ledger.json")
         logger.info("✓ Position Ledger initialized - conflict prevention active")
 
-        # PHASE 2: Risk Manager - Final Veto Authority
+        # PHASE 2: Risk Manager - Final Veto Authority (COMPETITION SETTINGS)
         self.risk_manager = RiskManagerVeto(
             initial_balance=initial_capital,
-            max_notional_per_symbol=2000.0,
-            max_total_notional=5000.0,
-            max_leverage=15.0,
-            max_margin_ratio=0.80,
-            max_daily_loss_pct=0.10,
-            max_total_drawdown_pct=0.25,
-            max_per_trade_risk_pct=0.01,  # 1% per trade (conservative)
-            min_risk_reward_ratio=1.5,
-            fee_churn_threshold=-0.01,
+            max_notional_per_symbol=3000.0,  # INCREASED: $3000 per symbol (was $2000)
+            max_total_notional=7000.0,  # INCREASED: $7000 total (was $5000)
+            max_leverage=20.0,  # INCREASED: 20x max (was 15x)
+            max_margin_ratio=0.85,  # LOOSENED: 85% margin (was 80%)
+            max_daily_loss_pct=0.15,  # LOOSENED: 15% daily loss (was 10%)
+            max_total_drawdown_pct=0.30,  # LOOSENED: 30% total DD (was 25%)
+            max_per_trade_risk_pct=0.03,  # INCREASED: 3% per trade (was 1%)
+            min_risk_reward_ratio=1.2,  # LOWERED: 1.2:1 R/R (was 1.5:1)
+            fee_churn_threshold=-0.02,  # LOOSENED: -2% fee threshold (was -1%)
             fee_churn_lookback=10
         )
         logger.info("✓ Risk Manager initialized - final veto authority active")
@@ -152,12 +152,12 @@ class SDMTradingEngine:
         self.journal = DecisionJournal(db_path="/tmp/trading_journal.db")
         logger.info("✓ Decision Journal initialized - logging all decisions")
 
-        # PHASE 2: Contextual Bandit - Online Strategy Selection
+        # PHASE 2: Contextual Bandit - Online Strategy Selection (COMPETITION SETTINGS)
         self.bandit = ContextualBanditAllocator(
             strategies=['momentum', 'flat'],  # Start with 2, add more later
             algorithm='ucb',
-            exploration_rate=0.2,
-            ucb_c=2.0,
+            exploration_rate=0.35,  # INCREASED: 35% exploration (was 20%)
+            ucb_c=3.0,  # INCREASED: Higher UCB constant for more exploration (was 2.0)
             state_path="/tmp/bandit_state.json"
         )
         logger.info("✓ Bandit Allocator initialized - online learning active")

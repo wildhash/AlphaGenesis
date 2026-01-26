@@ -24,20 +24,20 @@ class PositionSizer:
     
     def __init__(
         self,
-        max_position_size: float = 0.1,
+        max_position_size: float = 0.30,  # INCREASED: 30% for competition (was 10%)
         target_volatility: float = 0.15,
         max_leverage: float = 20.0,
-        kelly_fraction: float = 0.25,
-        min_position_size: float = 0.01,
+        kelly_fraction: float = 0.50,  # INCREASED: 50% for competition (was 25%)
+        min_position_size: float = 0.05,  # INCREASED: 5% minimum (was 1%)
     ):
         """
-        Initialize PositionSizer.
-        
+        Initialize PositionSizer - COMPETITION SETTINGS.
+
         Args:
             max_position_size: Maximum position size as fraction of portfolio (0-1)
             target_volatility: Target annual volatility for the portfolio
             max_leverage: Maximum allowed leverage (hackathon cap: 20x)
-            kelly_fraction: Fraction of Kelly to use (conservative: 0.25-0.5)
+            kelly_fraction: Fraction of Kelly to use (aggressive: 0.5 for competition)
             min_position_size: Minimum position size as fraction of portfolio
         """
         self.max_position_size = max_position_size
