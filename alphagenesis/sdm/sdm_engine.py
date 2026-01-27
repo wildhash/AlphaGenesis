@@ -681,11 +681,26 @@ class SDMTradingEngine:
         if not signal:
             return {'direction': 'HOLD', 'confidence': 0.0}
 
-        # Position sizing - ULTRA-CONSERVATIVE for margin constraints
-        # Use 1% of capital per trade to ensure orders FILL
-        position_size_pct = 0.01  # Micro-positions to fit available margin
+        # Position sizing - REGIME-AWARE for competition edge
+        # Base size: 1.5% (increased from 1%)
+        # STRONG_UPTREND: 2.5% (1.5% * 1.67 multiplier)
+        # Other regimes: 1.5% base
+        base_position_pct = 0.015  # Increased from 0.01
+
+        # Apply regime-specific multiplier
+        if regime == MarketRegime.STRONG_UPTREND:
+            size_multiplier = 1.67  # 1.5% * 1.67 = 2.5%
+            logger.info(f"📊 STRONG_UPTREND detected - applying 1.67x size multiplier")
+        elif regime == MarketRegime.WEAK_UPTREND:
+            size_multiplier = 1.2  # 1.5% * 1.2 = 1.8%
+        else:
+            size_multiplier = 1.0  # Keep base size
+
+        position_size_pct = base_position_pct * size_multiplier
         position_value = context['balance'] * position_size_pct
         size = position_value / price
+
+        logger.info(f"💰 Position sizing: {position_size_pct:.2%} of ${context['balance']:.2f} = ${position_value:.2f} (regime: {regime.value})")
 
         # Pre-round size to avoid precision issues - defensive measure
         # WEEX requires sizes to match stepSize increments
