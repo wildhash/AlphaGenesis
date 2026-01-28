@@ -153,14 +153,15 @@ class SDMTradingEngine:
         logger.info("✓ Decision Journal initialized - logging all decisions")
 
         # PHASE 2: Contextual Bandit - Online Strategy Selection (COMPETITION SETTINGS)
+        # EMERGENCY FIX: Remove 'flat' to force momentum trading (bandit learned flat > momentum)
         self.bandit = ContextualBanditAllocator(
-            strategies=['momentum', 'flat'],  # Start with 2, add more later
+            strategies=['momentum'],  # FORCE MOMENTUM ONLY - bandit was selecting 'flat' and stalling
             algorithm='ucb',
             exploration_rate=0.35,  # INCREASED: 35% exploration (was 20%)
             ucb_c=3.0,  # INCREASED: Higher UCB constant for more exploration (was 2.0)
             state_path="/tmp/bandit_state.json"
         )
-        logger.info("✓ Bandit Allocator initialized - online learning active")
+        logger.info("✓ Bandit Allocator initialized - MOMENTUM-ONLY MODE (flat removed to fix stall)")
 
         # PHASE 2: Position Monitor - Auto-Close Detection
         self.position_monitor = PositionMonitor(
@@ -535,6 +536,7 @@ class SDMTradingEngine:
                 )
 
                 if not proposed_action or proposed_action.get('direction') == 'HOLD':
+                    logger.debug(f"DIAG_HOLD_SKIP: {symbol} - Action is HOLD, skipping execution pipeline")
                     continue
 
                 # Evaluate action against intent graph
@@ -665,11 +667,12 @@ class SDMTradingEngine:
         regime_str = regime.value if hasattr(regime, 'value') else str(regime)
         chosen_strategy = self.bandit.select_strategy(symbol, regime_str)
 
-        logger.debug(f"Bandit selected strategy: {chosen_strategy} for {symbol} in {regime_str}")
+        logger.info(f"🎲 DIAG_STRATEGY_SELECT: {symbol} regime={regime_str} strategy={chosen_strategy}")
 
         # Generate signal using chosen strategy
         if chosen_strategy == 'flat':
             # Bandit learned best action is no action
+            logger.info(f"🚫 DIAG_FLAT_SELECTED: {symbol} - Bandit chose 'flat', returning HOLD")
             return {'direction': 'HOLD', 'confidence': 0.0, 'strategy': 'flat'}
         elif chosen_strategy == 'momentum':
             signal = self.momentum_strategy.generate_signal(candles, price, symbol)
@@ -679,7 +682,10 @@ class SDMTradingEngine:
             chosen_strategy = 'momentum'
 
         if not signal:
+            logger.info(f"❌ DIAG_NO_SIGNAL: {symbol} regime={regime_str} - Momentum engine returned None")
             return {'direction': 'HOLD', 'confidence': 0.0}
+
+        logger.info(f"✅ DIAG_SIGNAL_GENERATED: {symbol} direction={signal.get('direction')} confidence={signal.get('confidence', 0):.2f} regime={regime_str}")
 
         # Position sizing - REGIME-AWARE for competition edge
         # Base size: 1.5% (increased from 1%)
