@@ -667,6 +667,11 @@ class SDMTradingEngine:
         regime_str = regime.value if hasattr(regime, 'value') else str(regime)
         chosen_strategy = self.bandit.select_strategy(symbol, regime_str)
 
+        # TEMPORARY WIN-NOW OVERRIDE: Force momentum in LOW_VOL to restore signal path
+        if regime == MarketRegime.LOW_VOLATILITY:
+            chosen_strategy = "momentum"
+            logger.info(f"🔧 LOW_VOL OVERRIDE: Forcing chosen_strategy=momentum for {symbol} (restore signal path)")
+
         logger.info(f"🎲 DIAG_STRATEGY_SELECT: {symbol} regime={regime_str} strategy={chosen_strategy}")
 
         # Generate signal using chosen strategy
