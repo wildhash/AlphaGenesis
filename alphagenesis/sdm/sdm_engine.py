@@ -153,8 +153,10 @@ class SDMTradingEngine:
         logger.info("✓ Decision Journal initialized - logging all decisions")
 
         # PHASE 2: Contextual Bandit - Online Strategy Selection
+        # EMERGENCY FIX: Removed 'flat' - bandit was learning to avoid trading
+        # Commit 287c82a - Forced momentum-only after 4+ hour signal stall
         self.bandit = ContextualBanditAllocator(
-            strategies=['momentum', 'flat'],  # Start with 2, add more later
+            strategies=['momentum'],  # FORCE MOMENTUM ONLY - no 'flat' strategy
             algorithm='ucb',
             exploration_rate=0.2,
             ucb_c=2.0,

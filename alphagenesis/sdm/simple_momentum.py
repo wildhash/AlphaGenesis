@@ -56,7 +56,9 @@ class SimpleMomentumStrategy:
         self,
         candles: list,
         current_price: float,
-        symbol: str
+        symbol: str,
+        regime: Optional[str] = None,
+        **kwargs
     ) -> Optional[Dict]:
         """
         Generate trading signal - PIVOTED TO MOMENTUM TREND-FOLLOWING.
@@ -67,11 +69,16 @@ class SimpleMomentumStrategy:
         - Tight stops (0.5-1%), quick profits (1.5-2.5%)
         - Only rare extreme reversals (RSI < 20 or > 80)
 
+        Args:
+            regime: Market regime (optional, for future use)
+            **kwargs: Additional parameters for flexibility
+
         Returns:
             Dict with direction and confidence, or None if no signal
         """
         try:
             # Use the momentum hybrid engine for signal generation
+            # Pass regime through to the engine (even though not currently used)
             signal = self.momentum_engine.generate_signal(
                 candles=candles,
                 current_price=current_price,
