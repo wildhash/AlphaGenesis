@@ -4,9 +4,10 @@
 
 ## THE MISSION
 You're running AlphaGenesis, an AI trading bot in the WEEX AI Wars Hackathon.
-**Status:** 1st place - FINAL SPRINT TO SECURE GOLD
-**Location:** GCP (Project ID: gemiadvan) - SSH session
+**Status:** 2nd place - COMEBACK TO RECLAIM 1ST
+**Location:** GCP (Project ID: gemiadvan) - SSH session (SINGLE SESSION ONLY - VM resource limited)
 **Branch:** `claude/weex-trading-system-JjDSY` (ALWAYS)
+**Production Path:** `/opt/AlphaGenesis` (live system)
 
 ## CRITICAL FILES (Read these if you need deep context)
 - `CLAUDE.md` - GCP connection + sprint objectives (1 min read)
@@ -15,9 +16,10 @@ You're running AlphaGenesis, an AI trading bot in the WEEX AI Wars Hackathon.
 
 ## RECENT HISTORY
 - Fixed 4hr signal stall (bandit learned to stop trading)
-- Forced momentum-only mode in `sdm_engine.py:157`
-- System now trading actively
-- In 1st place, need optimization to stay there
+- Forced momentum-only mode in `sdm_engine.py:157` (strategies=['momentum'])
+- **NEW:** Applied LOW_VOL override in production `/opt/AlphaGenesis`
+- Fell from 1st to 2nd place during analysis
+- **Critical:** Verify LOW_VOL override working + tune thresholds
 
 ## INSTANT HEALTH CHECK
 ```bash

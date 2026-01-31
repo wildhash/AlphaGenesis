@@ -7,25 +7,31 @@
 - **Environment:** Google Cloud Platform (GCP)
 - **Interface:** SSH-in-browser
 
-## Current Status: OVERDRIVE MODE
-- **Position:** 1st place
-- **Phase:** Final lap sprint - bringing home the gold
-- **Priority:** Peak performance optimization
+## Current Status: COMEBACK MODE
+- **Position:** 2nd place (fell from 1st)
+- **Phase:** Critical recovery - reclaim 1st place
+- **Priority:** LOW_VOL override verification + threshold tuning
 - **Branch:** `claude/weex-trading-system-JjDSY`
+- **Issue:** SSH resource crash (single session only)
 
 ## Critical Context for CLI Session
 
 ### System State
-- **Repository:** `/home/user/AlphaGenesis` (wildhash/AlphaGenesis)
+- **Dev Repository:** `/home/user/AlphaGenesis` (wildhash/AlphaGenesis)
+- **Production Path:** `/opt/AlphaGenesis` (live trading system on GCP)
 - **Working System:** AlphaGenesis - AI quantitative trading bot
 - **Competition:** WEEX AI Wars Hackathon - LIVE TRADING
-- **Recent Fix:** Signal stall emergency resolved (forced momentum mode)
+- **Recent Deployments:**
+  1. Signal stall fix: Forced momentum-only mode (strategies=['momentum'])
+  2. LOW_VOL override: Force momentum in LOW_VOLATILITY regime (just deployed)
 
 ### Last Known Performance
-- In 1st place but need overdrive to secure win
+- **Current:** 2nd place (fell from 1st during signal analysis)
+- **Cause:** Likely LOW_VOL regime blocking signals (override just deployed)
 - Recently recovered from 4+ hour signal stall
-- System trading actively with momentum-only strategy
-- Monitoring for any performance degradation
+- System now has LOW_VOL override forcing momentum strategy
+- **Critical:** Verify override working + tune LOW_VOL thresholds
+- **SSH Warning:** VM resource constrained - single session only (2nd SSH crashed)
 
 ### Key Files to Know
 - `alphagenesis/features/sdm_engine.py` - Core trading engine (bandit + signals)
