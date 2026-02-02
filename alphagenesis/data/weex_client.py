@@ -48,6 +48,7 @@ class WEEXClient:
     CURRENT_ORDERS_ENDPOINT = "/capi/v2/order/current"
     ORDER_HISTORY_ENDPOINT = "/capi/v2/order/history"
     TRADE_FILLS_ENDPOINT = "/capi/v2/order/fills"
+    UPLOAD_AI_LOG_ENDPOINT = "/capi/v2/order/uploadAiLog"
 
     def __init__(
         self,
@@ -461,22 +462,72 @@ class WEEXClient:
         return self._request("GET", self.ORDER_HISTORY_ENDPOINT, params=params, signed=True)
     
     def get_trade_fills(
-        self, 
+        self,
         symbol: str = "cmt_btcusdt",
         page_size: int = 50
     ) -> Dict[str, Any]:
         """
         Get trade fill details.
-        
+
         Args:
             symbol: Trading pair
             page_size: Number of fills to return
-            
+
         Returns:
             List of trade fills with P&L
         """
         params = {"symbol": symbol, "pageSize": page_size}
         return self._request("GET", self.TRADE_FILLS_ENDPOINT, params=params, signed=True)
+
+    def upload_ai_log(
+        self,
+        order_id: Optional[str],
+        stage: str,
+        model: str,
+        input_data: Dict[str, Any],
+        output_data: Dict[str, Any],
+        explanation: str
+    ) -> Dict[str, Any]:
+        """
+        Upload AI log to demonstrate AI-driven decision logic.
+
+        CRITICAL: Required by WEEX AI Wars competition to prove AI involvement.
+        Teams without valid AI logs will be disqualified.
+
+        Args:
+            order_id: The order ID returned from WEEX order API (optional)
+            stage: Trading stage where AI participated (e.g., "Strategy Generation", "Decision Making")
+            model: Name or version of AI model used (e.g., "AlphaGenesis-Momentum-v1")
+            input_data: The prompt/query/input given to AI model (must include features)
+            output_data: AI model's output including predictions/decisions
+            explanation: Concise explanation of AI's reasoning (max 1000 chars)
+
+        Returns:
+            Upload result: {"code": "00000", "msg": "success", "data": "upload success"}
+        """
+        # Validate explanation length
+        if len(explanation) > 1000:
+            logger.warning(f"AI log explanation truncated from {len(explanation)} to 1000 chars")
+            explanation = explanation[:997] + "..."
+
+        data = {
+            "orderId": order_id,
+            "stage": stage,
+            "model": model,
+            "input": input_data,
+            "output": output_data,
+            "explanation": explanation
+        }
+
+        logger.info(f"Uploading AI log for order {order_id}: stage={stage}, model={model}")
+        result = self._request("POST", self.UPLOAD_AI_LOG_ENDPOINT, data=data, signed=True)
+
+        if result.get('code') == '00000':
+            logger.info(f"✓ AI log uploaded successfully for order {order_id}")
+        else:
+            logger.error(f"✗ AI log upload failed: {result}")
+
+        return result
 
     # =========================================================================
     # CONVENIENCE METHODS

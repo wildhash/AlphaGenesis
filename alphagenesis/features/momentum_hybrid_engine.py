@@ -119,7 +119,14 @@ class MomentumHybridEngine:
             # Momentum (10-period rate of change)
             momentum_pct = ((prices[-1] - prices[-10]) / prices[-10]) * 100
 
-            logger.info(f"{symbol} - RSI: {rsi:.1f}, EMA20: {ema_fast:.2f}, EMA50: {ema_slow:.2f}, Momentum: {momentum_pct:.2f}%")
+            # === AI REASONING LOG: Market Analysis ===
+            logger.info(f"🧠 AI_REASONING [{symbol}] Market Analysis:")
+            logger.info(f"   ├─ Price: ${current_price:.2f}")
+            logger.info(f"   ├─ EMA20 (fast): {ema_fast:.2f} | EMA50 (slow): {ema_slow:.2f}")
+            logger.info(f"   ├─ Trend: {'UPTREND' if trend_up else 'DOWNTREND' if trend_down else 'SIDEWAYS'} (EMA20 {'>' if trend_up else '<' if trend_down else '≈'} EMA50)")
+            logger.info(f"   ├─ RSI: {rsi:.1f}/100 ({'OVERSOLD' if rsi < 30 else 'OVERBOUGHT' if rsi > 70 else 'NEUTRAL'})")
+            logger.info(f"   ├─ Momentum: {momentum_pct:+.2f}% (10-period rate of change)")
+            logger.info(f"   └─ ATR: {atr:.2f} (volatility measure)")
 
             # === UPTREND MOMENTUM LONG ===
             # LOOSENED: Enter when trend is UP - removed strict RSI and price filters
@@ -128,13 +135,34 @@ class MomentumHybridEngine:
                 rsi > 45 and rsi < 78 and  # LOOSENED: from 55 to 45
                 momentum_pct > 0.3):  # LOOSENED: from 1.0% to 0.3%
 
+                # === AI REASONING LOG: Decision Logic ===
+                logger.info(f"🧠 AI_REASONING [{symbol}] LONG Signal Decision Process:")
+                logger.info(f"   ├─ CONDITION 1: Uptrend detected ✓ (EMA20 {ema_fast:.2f} > EMA50 {ema_slow:.2f})")
+                logger.info(f"   ├─ CONDITION 2: RSI in range ✓ ({rsi:.1f} > 45 AND < 78)")
+                logger.info(f"   │  └─ Reasoning: Not oversold, not extremely overbought - room to run")
+                logger.info(f"   ├─ CONDITION 3: Positive momentum ✓ ({momentum_pct:+.2f}% > 0.3%)")
+                logger.info(f"   │  └─ Reasoning: Price accelerating upward - trend continuation likely")
+                logger.info(f"   └─ DECISION: All conditions met → LONG signal generated")
+
                 # Confidence scales with signal strength
                 base_confidence = min(0.45 + (rsi - 45) / 60, 0.80)  # Higher base confidence
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
 
+                logger.info(f"🧠 AI_REASONING [{symbol}] Confidence Calculation:")
+                logger.info(f"   ├─ Base confidence: {base_confidence:.2f} (scaled by RSI strength)")
+                logger.info(f"   │  └─ Formula: min(0.45 + (RSI-45)/60, 0.80) = {base_confidence:.2f}")
+                logger.info(f"   ├─ Model confidence: {model_confidence:.2f} (ML model agreement)")
+                logger.info(f"   └─ Final confidence: {total_confidence:.2f} (70% base + 30% model)")
+
                 # WIDENED stops for crypto volatility
                 stop_loss_pct = max(0.015, (atr / current_price) * 1.0)  # 1.5-2.5%
                 take_profit_pct = stop_loss_pct * 2.0  # 2:1 R/R (faster exits)
+
+                logger.info(f"🧠 AI_REASONING [{symbol}] Risk Management:")
+                logger.info(f"   ├─ ATR-based stop: {(atr/current_price)*100:.2f}%")
+                logger.info(f"   ├─ Final stop loss: {stop_loss_pct*100:.2f}% (min 1.5% for volatility)")
+                logger.info(f"   ├─ Take profit: {take_profit_pct*100:.2f}% (2:1 risk/reward ratio)")
+                logger.info(f"   └─ Reasoning: Wider stops for crypto volatility, faster exits for competition")
 
                 logger.info(f"📈 MOMENTUM LONG for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
 
@@ -143,7 +171,16 @@ class MomentumHybridEngine:
                     'confidence': total_confidence,
                     'stop_loss_pct': stop_loss_pct,
                     'take_profit_pct': take_profit_pct,
-                    'reason': f'Uptrend momentum: RSI={rsi:.1f}, EMA20>{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                    'reason': f'Uptrend momentum: RSI={rsi:.1f}, EMA20>{ema_slow:.0f}, Mom={momentum_pct:.1f}%',
+                    'features': {
+                        'rsi': rsi,
+                        'ema_fast': ema_fast,
+                        'ema_slow': ema_slow,
+                        'momentum_pct': momentum_pct,
+                        'atr': atr,
+                        'current_price': current_price,
+                        'volatility': atr / current_price if current_price > 0 else 0.0
+                    }
                 }
 
             # === DOWNTREND MOMENTUM SHORT ===
@@ -153,12 +190,33 @@ class MomentumHybridEngine:
                 rsi < 55 and rsi > 22 and  # LOOSENED: from 45 to 55
                 momentum_pct < -0.3):  # LOOSENED: from -1.0% to -0.3%
 
+                # === AI REASONING LOG: Decision Logic ===
+                logger.info(f"🧠 AI_REASONING [{symbol}] SHORT Signal Decision Process:")
+                logger.info(f"   ├─ CONDITION 1: Downtrend detected ✓ (EMA20 {ema_fast:.2f} < EMA50 {ema_slow:.2f})")
+                logger.info(f"   ├─ CONDITION 2: RSI in range ✓ ({rsi:.1f} < 55 AND > 22)")
+                logger.info(f"   │  └─ Reasoning: Not overbought, not extremely oversold - room to fall")
+                logger.info(f"   ├─ CONDITION 3: Negative momentum ✓ ({momentum_pct:+.2f}% < -0.3%)")
+                logger.info(f"   │  └─ Reasoning: Price accelerating downward - trend continuation likely")
+                logger.info(f"   └─ DECISION: All conditions met → SHORT signal generated")
+
                 base_confidence = min(0.45 + (55 - rsi) / 60, 0.80)  # Higher base confidence
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
+
+                logger.info(f"🧠 AI_REASONING [{symbol}] Confidence Calculation:")
+                logger.info(f"   ├─ Base confidence: {base_confidence:.2f} (scaled by RSI strength)")
+                logger.info(f"   │  └─ Formula: min(0.45 + (55-RSI)/60, 0.80) = {base_confidence:.2f}")
+                logger.info(f"   ├─ Model confidence: {model_confidence:.2f} (ML model agreement)")
+                logger.info(f"   └─ Final confidence: {total_confidence:.2f} (70% base + 30% model)")
 
                 # WIDENED stops for crypto volatility
                 stop_loss_pct = max(0.015, (atr / current_price) * 1.0)  # 1.5-2.5%
                 take_profit_pct = stop_loss_pct * 2.0  # 2:1 R/R (faster exits)
+
+                logger.info(f"🧠 AI_REASONING [{symbol}] Risk Management:")
+                logger.info(f"   ├─ ATR-based stop: {(atr/current_price)*100:.2f}%")
+                logger.info(f"   ├─ Final stop loss: {stop_loss_pct*100:.2f}% (min 1.5% for volatility)")
+                logger.info(f"   ├─ Take profit: {take_profit_pct*100:.2f}% (2:1 risk/reward ratio)")
+                logger.info(f"   └─ Reasoning: Wider stops for crypto volatility, faster exits for competition")
 
                 logger.info(f"📉 MOMENTUM SHORT for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
 
@@ -167,30 +225,116 @@ class MomentumHybridEngine:
                     'confidence': total_confidence,
                     'stop_loss_pct': stop_loss_pct,
                     'take_profit_pct': take_profit_pct,
-                    'reason': f'Downtrend momentum: RSI={rsi:.1f}, EMA20<{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                    'reason': f'Downtrend momentum: RSI={rsi:.1f}, EMA20<{ema_slow:.0f}, Mom={momentum_pct:.1f}%',
+                    'features': {
+                        'rsi': rsi,
+                        'ema_fast': ema_fast,
+                        'ema_slow': ema_slow,
+                        'momentum_pct': momentum_pct,
+                        'atr': atr,
+                        'current_price': current_price,
+                        'volatility': atr / current_price if current_price > 0 else 0.0
+                    }
                 }
 
             # === EXTREME REVERSAL (Rare, high conviction only) ===
             # Only take reversals at EXTREME levels with confirmation
             if rsi < 20 and momentum_pct < -5 and trend_down:
+                logger.info(f"🧠 AI_REASONING [{symbol}] EXTREME REVERSAL LONG Decision:")
+                logger.info(f"   ├─ RARE SIGNAL: Extreme oversold reversal opportunity")
+                logger.info(f"   ├─ RSI: {rsi:.1f} < 20 (extreme oversold - bounce likely)")
+                logger.info(f"   ├─ Momentum: {momentum_pct:+.2f}% < -5% (capitulation levels)")
+                logger.info(f"   ├─ Trend context: Downtrend (adds reversal probability)")
+                logger.info(f"   ├─ Strategy: Counter-trend reversal (high risk, high conviction)")
+                logger.info(f"   └─ Confidence: 0.65 (lower than trend-following, tighter stops)")
                 logger.info(f"🔄 EXTREME REVERSAL LONG for {symbol}: RSI {rsi:.1f} extremely oversold")
                 return {
                     'direction': 'LONG',
                     'confidence': 0.65,
                     'stop_loss_pct': 0.008,
                     'take_profit_pct': 0.02,
-                    'reason': f'Extreme reversal: RSI={rsi:.1f} < 20'
+                    'reason': f'Extreme reversal: RSI={rsi:.1f} < 20',
+                    'features': {
+                        'rsi': rsi,
+                        'ema_fast': ema_fast,
+                        'ema_slow': ema_slow,
+                        'momentum_pct': momentum_pct,
+                        'atr': atr,
+                        'current_price': current_price,
+                        'volatility': atr / current_price if current_price > 0 else 0.0
+                    }
                 }
 
             if rsi > 80 and momentum_pct > 5 and trend_up:
+                logger.info(f"🧠 AI_REASONING [{symbol}] EXTREME REVERSAL SHORT Decision:")
+                logger.info(f"   ├─ RARE SIGNAL: Extreme overbought reversal opportunity")
+                logger.info(f"   ├─ RSI: {rsi:.1f} > 80 (extreme overbought - pullback likely)")
+                logger.info(f"   ├─ Momentum: {momentum_pct:+.2f}% > 5% (euphoria levels)")
+                logger.info(f"   ├─ Trend context: Uptrend (adds reversal probability)")
+                logger.info(f"   ├─ Strategy: Counter-trend reversal (high risk, high conviction)")
+                logger.info(f"   └─ Confidence: 0.65 (lower than trend-following, tighter stops)")
                 logger.info(f"🔄 EXTREME REVERSAL SHORT for {symbol}: RSI {rsi:.1f} extremely overbought")
                 return {
                     'direction': 'SHORT',
                     'confidence': 0.65,
                     'stop_loss_pct': 0.008,
                     'take_profit_pct': 0.02,
-                    'reason': f'Extreme reversal: RSI={rsi:.1f} > 80'
+                    'reason': f'Extreme reversal: RSI={rsi:.1f} > 80',
+                    'features': {
+                        'rsi': rsi,
+                        'ema_fast': ema_fast,
+                        'ema_slow': ema_slow,
+                        'momentum_pct': momentum_pct,
+                        'atr': atr,
+                        'current_price': current_price,
+                        'volatility': atr / current_price if current_price > 0 else 0.0
+                    }
                 }
+
+            # === NO SIGNAL - Explain Why ===
+            logger.info(f"🧠 AI_REASONING [{symbol}] NO SIGNAL - Conditions not met:")
+
+            # Check LONG conditions
+            long_checks = []
+            if trend_up:
+                long_checks.append(f"   ├─ ✓ Uptrend: EMA20 {ema_fast:.2f} > EMA50 {ema_slow:.2f}")
+            else:
+                long_checks.append(f"   ├─ ✗ Uptrend: EMA20 {ema_fast:.2f} < EMA50 {ema_slow:.2f} (DOWNTREND)")
+
+            if rsi > 45 and rsi < 78:
+                long_checks.append(f"   ├─ ✓ RSI range: {rsi:.1f} (45-78)")
+            else:
+                long_checks.append(f"   ├─ ✗ RSI range: {rsi:.1f} (outside 45-78)")
+
+            if momentum_pct > 0.3:
+                long_checks.append(f"   ├─ ✓ Positive momentum: {momentum_pct:+.2f}%")
+            else:
+                long_checks.append(f"   ├─ ✗ Positive momentum: {momentum_pct:+.2f}% < 0.3%")
+
+            # Check SHORT conditions
+            short_checks = []
+            if trend_down:
+                short_checks.append(f"   ├─ ✓ Downtrend: EMA20 {ema_fast:.2f} < EMA50 {ema_slow:.2f}")
+            else:
+                short_checks.append(f"   ├─ ✗ Downtrend: EMA20 {ema_fast:.2f} > EMA50 {ema_slow:.2f} (UPTREND)")
+
+            if rsi < 55 and rsi > 22:
+                short_checks.append(f"   ├─ ✓ RSI range: {rsi:.1f} (22-55)")
+            else:
+                short_checks.append(f"   ├─ ✗ RSI range: {rsi:.1f} (outside 22-55)")
+
+            if momentum_pct < -0.3:
+                short_checks.append(f"   ├─ ✓ Negative momentum: {momentum_pct:+.2f}%")
+            else:
+                short_checks.append(f"   ├─ ✗ Negative momentum: {momentum_pct:+.2f}% > -0.3%")
+
+            logger.info(f"   LONG conditions:")
+            for check in long_checks:
+                logger.info(check)
+            logger.info(f"   SHORT conditions:")
+            for check in short_checks:
+                logger.info(check)
+            logger.info(f"   └─ DECISION: Insufficient conditions met → HOLD (no signal)")
 
             return None
 
