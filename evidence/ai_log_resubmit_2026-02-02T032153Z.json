@@ -1,0 +1,132 @@
+{
+  "resume_from_id": "6b00fa98-9b25-4aa3-9bed-58e6a23f0300",
+  "resume_from_ms": 1769425672516,
+  "total_rows": 2246,
+  "total_matched": 2144,
+  "total_sent": 2144,
+  "success": 2144,
+  "failed": 0,
+  "stage_counts": {
+    "Decision Making": 1537,
+    "Exit Decision": 221,
+    "Exit Execution": 322,
+    "Risk Check": 36,
+    "Execution": 8,
+    "Strategy Evaluation": 20
+  },
+  "responses_sample": [
+    {
+      "id": "e15b8fb2-36a1-48ac-a1e3-4d6394792542",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002514482,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "3a7f6a1f-10df-4aca-b929-01cbe155799d",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002515055,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "153b7918-72db-491b-9e05-b99de97e6cf7",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002515612,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "32b410f0-5e70-4fae-9e6e-65f9372ce678",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002516168,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "4c46ca2a-d756-4c7a-9aac-aa970c281ea5",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002516714,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "d1812fee-e703-4af4-b3e9-838baeceac2d",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002517294,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "336a60c0-a111-407b-8968-4ad1e1a19bfb",
+      "stage": "Exit Decision",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002517845,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "2c91cdad-73cf-41dc-87bc-9608a5aa1ee6",
+      "stage": "Exit Execution",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002518398,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "11b18af2-f596-415b-8e78-5f2b1b228bd5",
+      "stage": "Exit Execution",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002518960,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "7c88a0b8-5d19-4b59-a21f-ab1b1788e989",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770002519507,
+        "data": "upload success"
+      }
+    }
+  ],
+  "started_at": "2026-02-02T03:21:53.973922+00:00",
+  "finished_at": "2026-02-02T03:41:45.679066+00:00",
+  "last_id": "5e14ab57-61e1-411e-8099-58541a81f5bd"
+}

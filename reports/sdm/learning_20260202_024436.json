@@ -1,0 +1,85 @@
+{
+  "total_feedback": 7,
+  "adaptations": [],
+  "strategy_performance": {
+    "exploit_opportunities_market_maker": {
+      "total_actions": 4,
+      "successful_actions": 4,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5619020000000001
+    },
+    "maintain_liquidity_market_maker": {
+      "total_actions": 3,
+      "successful_actions": 3,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.54878
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:11.386373",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:14.806204",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:18.195825",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_ltcusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:21.578531",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_btcusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:24.994119",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_ethusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:28.393158",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-02T02:43:31.920213",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    }
+  ]
+}

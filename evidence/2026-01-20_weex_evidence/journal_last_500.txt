@@ -1,0 +1,500 @@
+Jan 20 08:39:13 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:13 | INFO     | ======================================================================
+Jan 20 08:39:18 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:18 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 08:39:19 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:19 | INFO     |
+Jan 20 08:39:19 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:39:19 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:19 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 08:39:21 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:21 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:39:21 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:21 | INFO     | No binding found for grow_capital in low_volatility, creating new bindings
+Jan 20 08:39:21 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:21 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:39:22 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:22 | INFO     | cmt_btcusdt - RSI: 19.8, EMA20: 94965.21, EMA50: 95108.55, Momentum: -4.92%
+Jan 20 08:39:22 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:22 | INFO     |
+Jan 20 08:39:22 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 08:39:22 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:22 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 08:39:23 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:23 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:39:23 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:23 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:39:24 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:24 | INFO     | cmt_btcusdt - RSI: 19.8, EMA20: 94964.99, EMA50: 95108.46, Momentum: -4.93%
+Jan 20 08:39:24 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:24 | INFO     |
+Jan 20 08:39:24 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 08:39:24 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:24 | INFO     | Activation: 0.75, Priority: 5.0
+Jan 20 08:39:25 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:25 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:39:25 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:25 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | cmt_btcusdt - RSI: 19.8, EMA20: 94964.99, EMA50: 95108.46, Momentum: -4.93%
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     |
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | SDM SYSTEM STATUS
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | ======================================================================
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | Daily Trades: 0
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     |
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: Intent Graph: Step 5, 4/4 active
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     |
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 08:39:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:39:26 | INFO     | ======================================================================
+Jan 20 08:44:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:26 | INFO     |
+Jan 20 08:44:26 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:44:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:26 | INFO     | SDM ITERATION 6 - 2026-01-20 08:44:26.621967
+Jan 20 08:44:26 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:26 | INFO     | ======================================================================
+Jan 20 08:44:31 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:31 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 08:44:32 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:32 | INFO     |
+Jan 20 08:44:32 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:44:32 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:32 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 08:44:33 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:33 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:44:33 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:33 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:44:35 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:35 | INFO     | cmt_btcusdt - RSI: 20.1, EMA20: 94974.81, EMA50: 95112.50, Momentum: -4.82%
+Jan 20 08:44:35 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:35 | INFO     |
+Jan 20 08:44:35 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 08:44:35 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:35 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 08:44:36 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:36 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:44:36 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:36 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:44:37 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:37 | INFO     | cmt_btcusdt - RSI: 20.1, EMA20: 94974.81, EMA50: 95112.50, Momentum: -4.82%
+Jan 20 08:44:37 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:37 | INFO     |
+Jan 20 08:44:37 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 08:44:37 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:37 | INFO     | Activation: 0.70, Priority: 5.0
+Jan 20 08:44:38 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:38 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:44:38 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:38 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | cmt_btcusdt - RSI: 20.1, EMA20: 94974.81, EMA50: 95112.50, Momentum: -4.82%
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     |
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | SDM SYSTEM STATUS
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | ======================================================================
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | Daily Trades: 0
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     |
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: Intent Graph: Step 6, 4/4 active
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     |
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 08:44:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:44:39 | INFO     | ======================================================================
+Jan 20 08:49:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:39 | INFO     |
+Jan 20 08:49:39 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:49:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:39 | INFO     | SDM ITERATION 7 - 2026-01-20 08:49:39.450140
+Jan 20 08:49:39 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:39 | INFO     | ======================================================================
+Jan 20 08:49:44 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:44 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 08:49:45 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:45 | INFO     |
+Jan 20 08:49:45 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:49:45 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:45 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 08:49:46 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:46 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:49:46 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:46 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:49:47 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:47 | INFO     | cmt_btcusdt - RSI: 20.2, EMA20: 94977.93, EMA50: 95113.78, Momentum: -4.78%
+Jan 20 08:49:47 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:47 | INFO     |
+Jan 20 08:49:47 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 08:49:47 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:47 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 08:49:49 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:49 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:49:49 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:49 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:49:50 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:50 | INFO     | cmt_btcusdt - RSI: 20.3, EMA20: 94981.16, EMA50: 95115.11, Momentum: -4.75%
+Jan 20 08:49:50 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:50 | INFO     |
+Jan 20 08:49:50 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 08:49:50 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:50 | INFO     | Activation: 0.65, Priority: 5.0
+Jan 20 08:49:51 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:51 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.020, vol_pct=0.2)
+Jan 20 08:49:51 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:51 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | cmt_btcusdt - RSI: 20.3, EMA20: 94981.16, EMA50: 95115.11, Momentum: -4.75%
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     |
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | SDM SYSTEM STATUS
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | ======================================================================
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | Daily Trades: 0
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     |
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: Intent Graph: Step 7, 4/4 active
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     |
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 08:49:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:49:52 | INFO     | ======================================================================
+Jan 20 08:54:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:52 | INFO     |
+Jan 20 08:54:52 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:54:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:52 | INFO     | SDM ITERATION 8 - 2026-01-20 08:54:52.359525
+Jan 20 08:54:52 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:52 | INFO     | ======================================================================
+Jan 20 08:54:57 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:57 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 08:54:58 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:58 | INFO     |
+Jan 20 08:54:58 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:54:58 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:58 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 08:54:59 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:59 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 08:54:59 ai-trading-bot-vm python3[17901]: 2026-01-20 08:54:59 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:55:00 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:00 | INFO     | cmt_btcusdt - RSI: 20.7, EMA20: 94992.58, EMA50: 95119.82, Momentum: -4.62%
+Jan 20 08:55:00 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:00 | INFO     |
+Jan 20 08:55:00 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 08:55:00 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:00 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 08:55:01 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:01 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 08:55:01 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:01 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:55:03 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:03 | INFO     | cmt_btcusdt - RSI: 20.7, EMA20: 94994.50, EMA50: 95120.61, Momentum: -4.60%
+Jan 20 08:55:03 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:03 | INFO     |
+Jan 20 08:55:03 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 08:55:03 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:03 | INFO     | Activation: 0.60, Priority: 5.0
+Jan 20 08:55:04 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:04 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 08:55:04 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:04 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | cmt_btcusdt - RSI: 20.7, EMA20: 94994.50, EMA50: 95120.61, Momentum: -4.60%
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     |
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | SDM SYSTEM STATUS
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | ======================================================================
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | Daily Trades: 0
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     |
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: Intent Graph: Step 8, 4/4 active
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     |
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 08:55:05 ai-trading-bot-vm python3[17901]: 2026-01-20 08:55:05 | INFO     | ======================================================================
+Jan 20 09:00:05 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:05 | INFO     |
+Jan 20 09:00:05 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:00:05 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:05 | INFO     | SDM ITERATION 9 - 2026-01-20 09:00:05.235593
+Jan 20 09:00:05 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:05 | INFO     | ======================================================================
+Jan 20 09:00:10 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:10 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:00:11 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:11 | INFO     |
+Jan 20 09:00:11 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:00:11 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:11 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:00:12 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:12 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:00:12 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:12 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:00:13 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:13 | INFO     | cmt_btcusdt - RSI: 20.8, EMA20: 94962.97, EMA50: 95106.29, Momentum: -4.33%
+Jan 20 09:00:13 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:13 | INFO     |
+Jan 20 09:00:13 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:00:13 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:13 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:00:14 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:14 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:00:14 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:14 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:00:15 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:15 | INFO     | cmt_btcusdt - RSI: 20.8, EMA20: 94961.98, EMA50: 95105.88, Momentum: -4.34%
+Jan 20 09:00:15 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:15 | INFO     |
+Jan 20 09:00:15 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:00:15 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:15 | INFO     | Activation: 0.55, Priority: 5.0
+Jan 20 09:00:17 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:17 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:00:17 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:17 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | cmt_btcusdt - RSI: 20.8, EMA20: 94961.38, EMA50: 95105.64, Momentum: -4.35%
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     |
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | ======================================================================
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | Daily Trades: 0
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     |
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: Intent Graph: Step 9, 4/4 active
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     |
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:00:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:00:18 | INFO     | ======================================================================
+Jan 20 09:05:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:18 | INFO     |
+Jan 20 09:05:18 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:05:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:18 | INFO     | SDM ITERATION 10 - 2026-01-20 09:05:18.155319
+Jan 20 09:05:18 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:18 | INFO     | ======================================================================
+Jan 20 09:05:23 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:23 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:05:23 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:23 | INFO     |
+Jan 20 09:05:23 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:05:23 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:23 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:05:25 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:25 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:05:25 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:25 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:05:26 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:26 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94964.01, EMA50: 95106.72, Momentum: -4.32%
+Jan 20 09:05:26 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:26 | INFO     |
+Jan 20 09:05:26 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:05:26 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:26 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:05:27 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:27 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:05:27 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:27 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:05:28 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:28 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94965.75, EMA50: 95107.44, Momentum: -4.30%
+Jan 20 09:05:28 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:28 | INFO     |
+Jan 20 09:05:28 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:05:28 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:28 | INFO     | Activation: 0.50, Priority: 5.0
+Jan 20 09:05:29 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:29 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:05:29 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:29 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:05:30 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:30 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94965.76, EMA50: 95107.44, Momentum: -4.30%
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | No positions on exchange to reconcile
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     |
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | ======================================================================
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | Daily Trades: 0
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     |
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: Intent Graph: Step 10, 4/4 active
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     |
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:05:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:05:35 | INFO     | ======================================================================
+Jan 20 09:10:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:35 | INFO     |
+Jan 20 09:10:35 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:10:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:35 | INFO     | SDM ITERATION 11 - 2026-01-20 09:10:35.471080
+Jan 20 09:10:35 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:35 | INFO     | ======================================================================
+Jan 20 09:10:40 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:40 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:10:41 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:41 | INFO     |
+Jan 20 09:10:41 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:10:41 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:41 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:10:42 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:42 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:10:42 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:42 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:10:43 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:43 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94964.27, EMA50: 95106.83, Momentum: -4.32%
+Jan 20 09:10:43 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:43 | INFO     |
+Jan 20 09:10:43 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:10:43 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:43 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:10:45 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:45 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:10:45 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:45 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:10:46 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:46 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94964.77, EMA50: 95107.03, Momentum: -4.31%
+Jan 20 09:10:46 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:46 | INFO     |
+Jan 20 09:10:46 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:10:46 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:46 | INFO     | Activation: 0.45, Priority: 5.0
+Jan 20 09:10:47 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:47 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:10:47 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:47 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94964.78, EMA50: 95107.04, Momentum: -4.31%
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     |
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | ======================================================================
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | Daily Trades: 0
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     |
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: Intent Graph: Step 11, 4/4 active
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     |
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:10:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:10:48 | INFO     | ======================================================================
+Jan 20 09:15:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:48 | INFO     |
+Jan 20 09:15:48 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:15:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:48 | INFO     | SDM ITERATION 12 - 2026-01-20 09:15:48.288510
+Jan 20 09:15:48 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:48 | INFO     | ======================================================================
+Jan 20 09:15:53 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:53 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:15:54 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:54 | INFO     |
+Jan 20 09:15:54 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:15:54 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:54 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:15:55 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:55 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:15:55 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:55 | INFO     | Bound grow_capital -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:15:56 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:56 | INFO     | cmt_btcusdt - RSI: 20.8, EMA20: 94963.27, EMA50: 95106.42, Momentum: -4.33%
+Jan 20 09:15:56 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:56 | INFO     |
+Jan 20 09:15:56 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:15:56 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:56 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:15:57 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:57 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:15:57 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:57 | INFO     | Bound exploit_opportunities -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:15:59 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:59 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94964.73, EMA50: 95107.02, Momentum: -4.31%
+Jan 20 09:15:59 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:59 | INFO     |
+Jan 20 09:15:59 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:15:59 ai-trading-bot-vm python3[17901]: 2026-01-20 09:15:59 | INFO     | Activation: 0.40, Priority: 5.0
+Jan 20 09:16:00 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:00 | INFO     | Regime detected: low_volatility (confidence=1.00, trend=-0.019, vol_pct=0.2)
+Jan 20 09:16:00 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:00 | INFO     | Bound maintain_liquidity -> market_maker for cmt_btcusdt in low_volatility
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | cmt_btcusdt - RSI: 20.9, EMA20: 94966.07, EMA50: 95107.57, Momentum: -4.30%
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     |
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: ======================================================================
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | ======================================================================
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | Capital: $1,913.99 (P&L: $-0.01 / -0.00%)
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | Daily Trades: 0
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     |
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: Intent Graph: Step 12, 4/4 active
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     |
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:16:01 ai-trading-bot-vm python3[17901]: 2026-01-20 09:16:01 | INFO     | ======================================================================
+Jan 20 09:19:03 ai-trading-bot-vm systemd[1]: Stopping sdm-trading.service - SDM Trading System for WEEX AI Wars...
+Jan 20 09:19:03 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:03 | WARNING  | Received SIGINT (2), initiating clean shutdown...
+Jan 20 09:19:03 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:03 | INFO     | Stopping SDM Trading Engine...
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | Position monitor stopped
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | ✓ Position monitor stopped
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | DecisionJournal closed
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | ✓ Journal closed
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | Learning history exported to reports/sdm/learning_20260120_091908.json
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | Violation history exported to reports/sdm/ethics_20260120_091908.json
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | SDM results exported
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | ✓ Ledger saved
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | ERROR    | Failed to save bandit state: [Errno 13] Permission denied: '/tmp/bandit_state.tmp'
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | ✓ Bandit state saved
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | SDM Engine stopped cleanly.
+Jan 20 09:19:09 ai-trading-bot-vm systemd[1]: sdm-trading.service: Deactivated successfully.
+Jan 20 09:19:09 ai-trading-bot-vm systemd[1]: Stopped sdm-trading.service - SDM Trading System for WEEX AI Wars.
+Jan 20 09:19:09 ai-trading-bot-vm systemd[1]: sdm-trading.service: Consumed 17.344s CPU time.
+Jan 20 09:19:09 ai-trading-bot-vm systemd[1]: Started sdm-trading.service - SDM Trading System for WEEX AI Wars.
+Jan 20 09:19:11 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:11.700549: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+Jan 20 09:19:11 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:11.701139: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Jan 20 09:19:11 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:11.764122: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+Jan 20 09:19:11 ai-trading-bot-vm python3[19922]: To enable the following instructions: AVX2 AVX512F AVX512_VNNI FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Jan 20 09:19:13 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:13.266137: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Jan 20 09:19:13 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:13.267195: I external/local_xla/xla/tsl/cuda/cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+Jan 20 09:19:13 ai-trading-bot-vm python3[19922]: /usr/local/lib/python3.11/dist-packages/keras/src/export/tf2onnx_lib.py:8: FutureWarning: In the future `np.object` will be defined as the corresponding NumPy scalar.
+Jan 20 09:19:13 ai-trading-bot-vm python3[19922]:   if not hasattr(np, "object"):
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: Gym has been unmaintained since 2022 and does not support NumPy 2.0 amongst other critical functionality.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: Please upgrade to Gymnasium, the maintained drop-in replacement of Gym, or contact the authors of your software and request that they upgrade.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: Users of this version of Gym should be able to simply replace 'import gym' with 'import gymnasium as gym' in the vast majority of cases.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: See the migration guide at https://gymnasium.farama.org/introduction/migration_guide/ for additional information.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.655 | WARNING  | alphagenesis.risk.garch_model:<module>:18 - arch package not installed. GARCH functionality will be limited.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.657 | WARNING  | alphagenesis.backtest.metrics_report:<module>:20 - Plotly not available, some visualizations will be limited
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.657 | WARNING  | alphagenesis.backtest.metrics_report:<module>:28 - Matplotlib not available, falling back to Plotly
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_api_credentials:77 - WEEX API credentials configured
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_risk_limits:118 - Risk limits validated successfully
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_risk_limits:119 -   Max Leverage: 20.0x (Hackathon Cap: 20x)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_risk_limits:120 -   Max Daily DD: 10.0%
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_risk_limits:121 -   Max Total DD: 25.0%
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14.662 | INFO     | config.settings:validate_risk_limits:122 -   Max Position: 30.0%
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Logging configured
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ╔═══════════════════════════════════════════════════════════════════╗
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║                                                                   ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║           SEMANTIC DATAFLOW MACHINE TRADING SYSTEM                ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║                                                                   ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║                   WEEX AI Wars: Alpha Awakens                     ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║                                                                   ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║  Paradigm: Intent-Driven Post-Von Neumann Architecture           ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║  Features: Self-Learning, Adaptive, Ethically-Constrained        ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ║                                                                   ║
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     ╚═══════════════════════════════════════════════════════════════════╝
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]:     
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ All required environment variables present
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Configuration:
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     |   Initial Capital: $1,000.00
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     |   Update Interval: 300s (5.0 minutes)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | WEEX API client initialized with credentials
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Initializing SDM Components...
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Intent Graph initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added intent node: grow_capital - Grow capital aggressively without catastrophic drawdown
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added intent node: manage_risk - Protect capital from adverse moves
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added intent node: exploit_opportunities - Capitalize on high-confidence market opportunities
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added intent node: maintain_liquidity - Maintain sufficient liquidity for opportunities
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Trading intent graph initialized with 4 primary intents
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | AI log queue status: pending=0, last_success=never
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | HIM initialized with 64d semantic space
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Semantic Binding Layer initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: lstm
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: transformer
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: rl_agent
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: ensemble
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: quantum_risk
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: scalper
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: swing_trader
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: arbitrage
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Registered model: market_maker
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Models registered with semantic binding layer
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Constraint Propagator initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added boundary field: max_leverage (center: 20.0, strength: 1000.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added boundary field: max_drawdown (center: 0.25, strength: 1000.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added boundary field: daily_drawdown (center: 0.1, strength: 500.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added repulsive field: position_size (center: 0.5, strength: 10.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added repulsive field: daily_trades (center: 3.0, strength: 20.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added attractive field: risk_reward_ratio (center: 3.0, strength: 5.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added attractive field: cash_reserve (center: 0.2, strength: 3.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Trading constraint fields initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Ethics Engine initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: total_drawdown (capital_preservation)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: max_leverage (risk_limits)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: daily_drawdown (risk_limits)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: position_concentration (risk_limits)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: daily_trade_count (safety)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Trading ethical constraints initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Continuous Learning Engine initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | MarketRegimeDetector initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | MarketRegimeDetector initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | MultiTimeframeConfluence initialized: ['1h', '4h', '1d']
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | CircuitBreaker initialized: max_daily_dd=10.0%, max_total_dd=25.0%, max_leverage=20.0x, max_position=30.0%
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | WARNING  | ⚠️  LEVERAGE CAP ENFORCEMENT ACTIVE: 20.0x (WEEX AI Wars Hackathon Requirement)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Momentum strategy initialized (RSI, MA, momentum-based)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Loaded ledger from /opt/AlphaGenesis/tmp/position_ledger.json
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | PositionLedger initialized with 0 open positions
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Position Ledger initialized - conflict prevention active
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | RiskManagerVeto initialized with hard limits
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Risk Manager initialized - final veto authority active
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Journal tables created/verified
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | DecisionJournal initialized at /tmp/trading_journal.db
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Decision Journal initialized - logging all decisions
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Loaded bandit state from /tmp/bandit_state.json
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | BanditAllocator initialized with 2 strategies, algorithm=ucb
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Bandit Allocator initialized - online learning active
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | PositionMonitor initialized (poll every 30s)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Position Monitor initialized - will start with engine
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | WARNING  | 🟠 DIAGNOSTIC_MODE enabled - 40753 will suspend orders without stopping the engine
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | SDM TRADING ENGINE INITIALIZED
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Intent Graph: Active with trading intents
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Semantic Binding: Model registry initialized
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Constraint Fields: Potential landscape configured
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Ethics Engine: First-class constraints enforced
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Learning Engine: Continuous adaptation enabled
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     |
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: Starting SDM Trading Engine...
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     |
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | STARTING SDM TRADING ENGINE
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Paradigm: Intent-Driven Semantic Dataflow
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Architecture: Post-Von Neumann Continuous Resolution
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Learning: Embodied in Dataflow
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ✓ Position monitor started
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     |
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: ======================================================================
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | SDM ITERATION 1 - 2026-01-20 09:19:14.740362
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | ======================================================================
+Jan 20 09:19:20 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:20 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:19:20 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:20 | INFO     |
+Jan 20 09:19:20 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:19:20 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:20 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:19:22 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:22 | INFO     | Regime detected: weak_downtrend (confidence=0.96, trend=-0.019, vol_pct=50.0)
+Jan 20 09:19:22 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:22 | INFO     | No binding found for grow_capital in weak_downtrend, creating new bindings
+Jan 20 09:19:22 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:22 | WARNING  | Intent grow_capital not embedded
+Jan 20 09:19:22 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:22 | INFO     | Bound grow_capital -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:19:23 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:23 | INFO     | cmt_btcusdt - RSI: 20.5, EMA20: 94951.84, EMA50: 95101.71, Momentum: -4.45%
+Jan 20 09:19:23 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:23 | INFO     |
+Jan 20 09:19:23 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:19:23 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:23 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:19:24 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:24 | INFO     | Regime detected: weak_downtrend (confidence=0.96, trend=-0.019, vol_pct=50.0)
+Jan 20 09:19:24 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:24 | INFO     | No binding found for exploit_opportunities in weak_downtrend, creating new bindings
+Jan 20 09:19:24 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:24 | WARNING  | Intent exploit_opportunities not embedded
+Jan 20 09:19:24 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:24 | INFO     | Bound exploit_opportunities -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:19:25 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:25 | INFO     | cmt_btcusdt - RSI: 20.5, EMA20: 94951.84, EMA50: 95101.71, Momentum: -4.45%
+Jan 20 09:19:25 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:25 | INFO     |
+Jan 20 09:19:25 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:19:25 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:25 | INFO     | Activation: 0.95, Priority: 5.0
+Jan 20 09:19:26 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:26 | INFO     | Regime detected: weak_downtrend (confidence=0.96, trend=-0.019, vol_pct=50.0)
+Jan 20 09:19:26 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:26 | INFO     | No binding found for maintain_liquidity in weak_downtrend, creating new bindings
+Jan 20 09:19:26 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:26 | WARNING  | Intent maintain_liquidity not embedded
+Jan 20 09:19:26 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:26 | INFO     | Bound maintain_liquidity -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | cmt_btcusdt - RSI: 20.5, EMA20: 94951.84, EMA50: 95101.71, Momentum: -4.45%
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     |
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: ======================================================================
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | ======================================================================
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | Capital: $1,913.99 (P&L: $+0.00 / +0.00%)
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | Daily Trades: 0
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     |
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: Intent Graph: Step 1, 4/4 active
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     |
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | ======================================================================
+Jan 20 09:19:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:27 | INFO     | Feedback loop: no trades in last 4h, no adjustments
+Jan 20 09:24:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:14 | INFO     | AI log queue status: pending=0, last_success=never
+Jan 20 09:24:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:27 | INFO     |
+Jan 20 09:24:27 ai-trading-bot-vm python3[19922]: ======================================================================
+Jan 20 09:24:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:27 | INFO     | SDM ITERATION 2 - 2026-01-20 09:24:27.780100
+Jan 20 09:24:27 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:27 | INFO     | ======================================================================
+Jan 20 09:24:32 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:32 | INFO     | Balances - Full: $1913.99, Contest: $1913.99, Available: $1913.99
+Jan 20 09:24:33 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:33 | INFO     |
+Jan 20 09:24:33 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:24:33 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:33 | INFO     | Activation: 0.95, Priority: 10.0
+Jan 20 09:24:35 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:35 | INFO     | Regime detected: weak_downtrend (confidence=0.95, trend=-0.019, vol_pct=50.0)
+Jan 20 09:24:35 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:35 | INFO     | Bound grow_capital -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:24:36 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:36 | INFO     | cmt_btcusdt - RSI: 20.6, EMA20: 94957.49, EMA50: 95104.04, Momentum: -4.39%
+Jan 20 09:24:36 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:36 | INFO     |
+Jan 20 09:24:36 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Capitalize on high-confidence market opportunities ---
+Jan 20 09:24:36 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:36 | INFO     | Activation: 0.95, Priority: 7.0
+Jan 20 09:24:37 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:37 | INFO     | Regime detected: weak_downtrend (confidence=0.95, trend=-0.019, vol_pct=50.0)
+Jan 20 09:24:37 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:37 | INFO     | Bound exploit_opportunities -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:24:38 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:38 | INFO     | cmt_btcusdt - RSI: 20.6, EMA20: 94957.49, EMA50: 95104.04, Momentum: -4.39%
+Jan 20 09:24:38 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:38 | INFO     |
+Jan 20 09:24:38 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Maintain sufficient liquidity for opportunities ---
+Jan 20 09:24:38 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:38 | INFO     | Activation: 0.90, Priority: 5.0
+Jan 20 09:24:39 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:39 | INFO     | Regime detected: weak_downtrend (confidence=0.95, trend=-0.019, vol_pct=50.0)
+Jan 20 09:24:39 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:39 | INFO     | Bound maintain_liquidity -> ensemble for cmt_btcusdt in weak_downtrend
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | cmt_btcusdt - RSI: 20.6, EMA20: 94956.39, EMA50: 95103.58, Momentum: -4.40%
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: ======================================================================
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | SDM SYSTEM STATUS
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | ======================================================================
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | Capital: $1,913.99 (P&L: $+0.00 / +0.00%)
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | Daily Trades: 0
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: Intent Graph: Step 2, 4/4 active
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | ======================================================================

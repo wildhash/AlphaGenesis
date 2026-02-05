@@ -1,0 +1,56 @@
+{
+  "total_feedback": 3,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.525
+    },
+    "exploit_opportunities_swing_trader": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.525
+    },
+    "maintain_liquidity_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.525
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-13T03:51:17.832895",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.75
+    },
+    {
+      "action_id": "action_1_cmt_ltcusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-13T03:51:23.665574",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.75
+    },
+    {
+      "action_id": "action_1_cmt_ltcusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-13T03:51:29.450105",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.75
+    }
+  ]
+}

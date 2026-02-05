@@ -1,0 +1,74 @@
+{
+  "total_feedback": 5,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_swing_trader": {
+      "total_actions": 3,
+      "successful_actions": 3,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.54065
+    },
+    "grow_capital_scalper": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5205
+    },
+    "grow_capital_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5184096425057396
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_ethusdt",
+      "intent_id": "grow_capital",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T10:36:42.114423",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T10:36:45.564579",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "grow_capital",
+      "model_type": "scalper",
+      "timestamp": "2026-01-14T10:36:47.287213",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.7049999999999998
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T10:36:49.021321",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T10:36:50.730821",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.6840964250573962
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+Jan 20 08:39:19 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:44:32 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:49:45 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 08:54:58 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:00:11 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:05:23 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:10:41 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:15:54 ai-trading-bot-vm python3[17901]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:19:03 ai-trading-bot-vm systemd[1]: Stopping sdm-trading.service - SDM Trading System for WEEX AI Wars...
+Jan 20 09:19:03 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:03 | INFO     | Stopping SDM Trading Engine...
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | Position monitor stopped
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | ✓ Position monitor stopped
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | ERROR    | Failed to save bandit state: [Errno 13] Permission denied: '/tmp/bandit_state.tmp'
+Jan 20 09:19:08 ai-trading-bot-vm python3[17901]: 2026-01-20 09:19:08 | INFO     | SDM Engine stopped cleanly.
+Jan 20 09:19:09 ai-trading-bot-vm systemd[1]: Stopped sdm-trading.service - SDM Trading System for WEEX AI Wars.
+Jan 20 09:19:11 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:11.701139: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Jan 20 09:19:13 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:13.266137: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off errors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added intent node: grow_capital - Grow capital aggressively without catastrophic drawdown
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added boundary field: max_drawdown (center: 0.25, strength: 1000.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added boundary field: daily_drawdown (center: 0.1, strength: 500.0)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: total_drawdown (capital_preservation)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | INFO     | Added ethical constraint: daily_drawdown (risk_limits)
+Jan 20 09:19:14 ai-trading-bot-vm python3[19922]: 2026-01-20 09:19:14 | WARNING  | 🟠 DIAGNOSTIC_MODE enabled - 40753 will suspend orders without stopping the engine
+Jan 20 09:19:20 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---
+Jan 20 09:24:33 ai-trading-bot-vm python3[19922]: --- Resolving Intent: Grow capital aggressively without catastrophic drawdown ---

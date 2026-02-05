@@ -1,0 +1,266 @@
+{
+  "total_feedback": 24,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_lstm": {
+      "total_actions": 7,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.6008502057220184
+    },
+    "exploit_opportunities_lstm": {
+      "total_actions": 7,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.6005943232928728
+    },
+    "maintain_liquidity_swing_trader": {
+      "total_actions": 7,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5997554442625291
+    },
+    "grow_capital_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.48731884057970953
+    },
+    "exploit_opportunities_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.4869090909090902
+    },
+    "maintain_liquidity_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 0,
+      "success_rate": 0.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.4874819102749632
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:26.978542",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:29.295474",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.41637630662020014
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:31.621279",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.72394678492239
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:33.941190",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6496382789694138
+    },
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:45.594496",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:47.891167",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.411826452064372
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:50.205314",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.72394678492239
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:20:52.495604",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6510390268626466
+    },
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:21:04.162942",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:21:06.464337",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.4087719298245531
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:21:08.772245",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.7204899777282797
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:21:11.138314",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6419057377049185
+    },
+    {
+      "action_id": "action_2_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:23.950928",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_2_cmt_xrpusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T02:26:26.256217",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.37318840579709517
+    },
+    {
+      "action_id": "action_2_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:28.552403",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.718749999999995
+    },
+    {
+      "action_id": "action_2_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:30.844180",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6354838709677437
+    },
+    {
+      "action_id": "action_2_cmt_dogeusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:42.478283",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_2_cmt_xrpusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T02:26:44.806388",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.3690909090909017
+    },
+    {
+      "action_id": "action_2_cmt_adausdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:47.220812",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.718749999999995
+    },
+    {
+      "action_id": "action_2_cmt_bnbusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T02:26:49.556615",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6345905450787918
+    },
+    {
+      "action_id": "action_2_cmt_dogeusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:27:01.094219",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.85
+    },
+    {
+      "action_id": "action_2_cmt_xrpusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T02:27:03.453400",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.3748191027496318
+    },
+    {
+      "action_id": "action_2_cmt_adausdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:27:05.774456",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.718749999999995
+    },
+    {
+      "action_id": "action_2_cmt_bnbusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "swing_trader",
+      "timestamp": "2026-01-14T02:27:08.056497",
+      "success": false,
+      "pnl": 0.0,
+      "fitness_score": 0.6369315986087869
+    }
+  ]
+}

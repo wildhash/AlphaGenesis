@@ -1,0 +1,127 @@
+{
+  "resume_from_id": "95d44b5b-7a92-4e2e-8428-1b6cd6384255",
+  "resume_from_ms": 1770004134883,
+  "total_rows": 17,
+  "total_matched": 17,
+  "total_sent": 17,
+  "success": 17,
+  "failed": 0,
+  "stage_counts": {
+    "Strategy Evaluation": 17
+  },
+  "responses_sample": [
+    {
+      "id": "3d448102-d650-4e1f-93dd-5436e98fff80",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004195654,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "ac1efd7a-1688-4ad5-ba77-22477a672822",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004196212,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "b191f61c-5bbd-4ee4-ac93-d07f6f3d8e88",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004196766,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "6fe54815-04f1-4d3b-b7cb-5a6d6591c391",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004197316,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "127e8d29-70fa-44b5-8973-6e44d5fa3dd6",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004197873,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "080ac57a-b085-48c7-ac33-494d46549e71",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004198418,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "e48d4355-feb1-48fe-8c4d-a275d624be5a",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004198972,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "98c6ea83-c4be-4f40-9863-deffaf9f2ea2",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004199557,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "ea1526f4-ed97-40d0-9a2f-71fccebe99ed",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004200132,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "a957952a-1f2d-444c-b62e-a8818bde1a29",
+      "stage": "Strategy Evaluation",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770004200701,
+        "data": "upload success"
+      }
+    }
+  ],
+  "started_at": "2026-02-02T03:49:55.156137+00:00",
+  "finished_at": "2026-02-02T03:50:04.864620+00:00",
+  "last_id": "4a65d0c9-8f62-4a66-a580-4d0c4a3809c9"
+}

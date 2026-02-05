@@ -1,0 +1,60 @@
+{
+  "total_feedback": 5,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_ensemble": {
+      "total_actions": 5,
+      "successful_actions": 5,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5669265
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_btcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T15:15:20.486131",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_ethusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T15:15:22.159816",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T15:15:25.579627",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T15:15:28.974222",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-01-14T15:15:30.667962",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.7049999999999998
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "total_feedback": 1,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_lstm": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.515
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_btcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-15T02:56:14.584426",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    }
+  ]
+}

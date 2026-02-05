@@ -1,0 +1,7 @@
+In-service env AI log smoke upload (no orders):
+Command:
+  sudo bash -lc 'set -a && source /opt/AlphaGenesis/.env && set +a && PYTHONPATH=/opt/AlphaGenesis python3 /opt/AlphaGenesis/scripts/weex_ai_log_smoke.py'
+Response:
+  code: 00000
+  data: upload success
+  event_id: fe131bf6-cd62-4613-a16e-41f4e42e9e3d

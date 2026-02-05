@@ -1,0 +1,47 @@
+{
+  "total_rows": 5969,
+  "checked": 5969,
+  "fixed": 3,
+  "uploaded": 3,
+  "failed": 0,
+  "samples": [
+    {
+      "id": "ee9a1646-d68c-4b55-9f3f-28cfa1cee882",
+      "stage": "Execution",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770030875662,
+        "data": "upload success"
+      },
+      "explanation": "Execution: SDM:momentum symbol=cmt_ltcusdt"
+    },
+    {
+      "id": "d334eb8c-f323-4002-9fc4-1f31f8e33c99",
+      "stage": "Execution",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770030876238,
+        "data": "upload success"
+      },
+      "explanation": "Execution: SDM:momentum symbol=cmt_solusdt"
+    },
+    {
+      "id": "daf1d62e-933b-4a08-8625-d7e0f092277e",
+      "stage": "Execution",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770030876824,
+        "data": "upload success"
+      },
+      "explanation": "Execution: SDM:momentum symbol=cmt_solusdt"
+    }
+  ],
+  "started_at": "2026-02-02T11:14:35.134474+00:00",
+  "finished_at": "2026-02-02T11:14:36.899882+00:00"
+}

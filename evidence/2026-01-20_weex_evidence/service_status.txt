@@ -1,0 +1,22 @@
+● sdm-trading.service - SDM Trading System for WEEX AI Wars
+     Loaded: loaded (/etc/systemd/system/sdm-trading.service; enabled; preset: enabled)
+    Drop-In: /etc/systemd/system/sdm-trading.service.d
+             └─override.conf
+     Active: active (running) since Tue 2026-01-20 09:19:09 UTC; 6min ago
+   Main PID: 19922 (python3)
+      Tasks: 17 (limit: 38498)
+     Memory: 409.4M
+        CPU: 8.039s
+     CGroup: /system.slice/sdm-trading.service
+             └─19922 /usr/bin/python3 /opt/AlphaGenesis/scripts/start_sdm_trading.py
+
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | ======================================================================
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | Capital: $1,913.99 (P&L: $+0.00 / +0.00%)
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | Daily Trades: 0
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: Intent Graph: Step 2, 4/4 active
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |   - Grow capital aggressively without catastrophic dra: activation=0.95
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |   - Capitalize on high-confidence market opportunities: activation=0.95
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     |
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: Ethics: 0 violations total, rate=0.0%
+Jan 20 09:24:40 ai-trading-bot-vm python3[19922]: 2026-01-20 09:24:40 | INFO     | ======================================================================

@@ -1,0 +1,58 @@
+{
+  "total_feedback": 4,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_lstm": {
+      "total_actions": 2,
+      "successful_actions": 2,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5285
+    },
+    "grow_capital_market_maker": {
+      "total_actions": 2,
+      "successful_actions": 2,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5370840771772873
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_ethusdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T11:36:50.987452",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_xrpusdt",
+      "intent_id": "grow_capital",
+      "model_type": "market_maker",
+      "timestamp": "2026-01-14T11:36:56.162170",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.7002171136653872
+    },
+    {
+      "action_id": "action_1_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "lstm",
+      "timestamp": "2026-01-14T11:36:57.908914",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.65
+    },
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "market_maker",
+      "timestamp": "2026-01-14T11:36:59.634728",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.6906453694740244
+    }
+  ]
+}

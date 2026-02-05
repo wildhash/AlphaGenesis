@@ -1,0 +1,52 @@
+{
+  "total_violations": 3,
+  "total_evaluations": 3,
+  "violations": [
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-13T03:51:17.239032",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-13T03:51:23.087574",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-13T03:51:28.867907",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    }
+  ],
+  "summary": {
+    "total_violations": 3,
+    "total_evaluations": 3,
+    "violation_rate": 1.0,
+    "recent_violations": 3,
+    "by_severity": {
+      "catastrophic": 0,
+      "critical": 3,
+      "warning": 0,
+      "info": 0
+    },
+    "by_domain": {
+      "accountability": 3
+    },
+    "most_violated_constraint": "min_confidence"
+  }
+}

@@ -1,0 +1,242 @@
+"""
+Momentum Hybrid Engine - Competition Edition
+Trend-following strategy with AI confirmation for WEEX AI Wars
+"""
+import numpy as np
+from typing import Dict, Optional
+from loguru import logger
+from alphagenesis.sdm.semantic_binding import MarketRegime
+
+
+class MomentumHybridEngine:
+    """
+    Generates signals by fusing:
+    1. Trend-following technical indicators (primary)
+    2. Volatility-adjusted position sizing
+    3. Competition-optimized risk parameters
+    """
+
+    def __init__(self):
+        self.ema_fast = 20
+        self.ema_slow = 50
+        self.rsi_period = 14
+
+    def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> float:
+        """Calculate RSI indicator."""
+        if len(prices) < period + 1:
+            return 50.0
+
+        deltas = np.diff(prices)
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+
+        avg_gain = np.mean(gains[-period:])
+        avg_loss = np.mean(losses[-period:])
+
+        if avg_loss == 0:
+            return 100.0
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def _calculate_ema(self, prices: np.ndarray, period: int) -> float:
+        """Calculate exponential moving average."""
+        if len(prices) < period:
+            return prices[-1]
+
+        multiplier = 2 / (period + 1)
+        ema = prices[-period]  # Start with SMA
+
+        for price in prices[-period+1:]:
+            ema = (price - ema) * multiplier + ema
+
+        return ema
+
+    def _calculate_atr(self, highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, period: int = 14) -> float:
+        """Calculate Average True Range."""
+        if len(closes) < period + 1:
+            return abs(highs[-1] - lows[-1])
+
+        tr_list = []
+        for i in range(1, len(closes)):
+            high_low = highs[i] - lows[i]
+            high_close = abs(highs[i] - closes[i-1])
+            low_close = abs(lows[i] - closes[i-1])
+            tr = max(high_low, high_close, low_close)
+            tr_list.append(tr)
+
+        return np.mean(tr_list[-period:])
+
+    def generate_signal(
+        self,
+        candles: list,
+        current_price: float,
+        symbol: str,
+        model_confidence: float = 0.6,
+        regime: MarketRegime | None = None
+    ) -> Optional[Dict]:
+        """
+        Generate MOMENTUM/TREND-FOLLOWING signal (NOT reversal).
+
+        Strategy:
+        - LONG: Uptrend confirmed (EMA20 > EMA50, RSI > 55, price > EMA20)
+        - SHORT: Downtrend confirmed (EMA20 < EMA50, RSI < 45, price < EMA20)
+
+        Returns signal dict or None
+        """
+        try:
+            if regime is None:
+                regime = MarketRegime.UNKNOWN
+            # Extract OHLC data
+            closes = []
+            highs = []
+            lows = []
+
+            for c in candles:
+                if isinstance(c, dict):
+                    closes.append(float(c.get('close', 0)))
+                    highs.append(float(c.get('high', 0)))
+                    lows.append(float(c.get('low', 0)))
+                elif isinstance(c, list) and len(c) >= 5:
+                    closes.append(float(c[4]))  # Close
+                    highs.append(float(c[2]))   # High
+                    lows.append(float(c[3]))    # Low
+            logger.info(f"DIAG_MOMENTUM_LEN symbol={symbol} candles={len(closes)}")
+            if len(closes) < 50:
+                logger.info(f"DIAG_MOMENTUM_SHORT_CANDLES symbol={symbol} candles={len(closes)}")
+                return None
+
+            prices = np.array(closes)
+            highs_arr = np.array(highs)
+            lows_arr = np.array(lows)
+
+            # Calculate indicators
+            ema_fast = self._calculate_ema(prices, self.ema_fast)
+            ema_slow = self._calculate_ema(prices, self.ema_slow)
+            rsi = self._calculate_rsi(prices)
+            atr = self._calculate_atr(highs_arr, lows_arr, prices)
+
+            # Trend detection
+            trend_up = ema_fast > ema_slow
+            trend_down = ema_fast < ema_slow
+
+            # Momentum (10-period rate of change)
+            momentum_pct = ((prices[-1] - prices[-10]) / prices[-10]) * 100
+
+            low_vol_flag = (regime == MarketRegime.LOW_VOLATILITY)
+            logger.info(
+                f"DIAG_MOMENTUM symbol={symbol} regime={regime} momentum_pct={momentum_pct:.4f} rsi={rsi:.2f} low_vol={low_vol_flag}"
+            )
+
+            # Soft LOW_VOL gate: allow only extreme impulse moves to avoid churn.
+            if regime == MarketRegime.LOW_VOLATILITY:
+                logger.info("LOW_VOL gate reached")
+                allow = False
+                # LOW_VOL_SHORT_GATE_X3: conservative short unlock for strong downside
+                if momentum_pct <= -3.0 and rsi <= 45:
+                    return {
+                        'direction': 'SHORT',
+                        'confidence': 0.68,
+                        'stop_loss_pct': 0.008,
+                        'take_profit_pct': 0.02,
+                        'reason': 'LOW_VOL_SHORT_GATE_X3'
+                    }
+                if momentum_pct < -2.0 and rsi < 48 and trend_down:
+                    allow = True
+                if momentum_pct > 2.0 and rsi > 52 and trend_up:
+                    allow = True
+                if not allow:
+                    logger.info(f"LOW_VOL gate blocked: momentum_pct={momentum_pct:.3f} rsi={rsi:.1f} trend_up={trend_up} trend_down={trend_down}")
+
+                    return "no_signal"
+
+            logger.info(f"{symbol} - RSI: {rsi:.1f}, EMA20: {ema_fast:.2f}, EMA50: {ema_slow:.2f}, Momentum: {momentum_pct:.2f}%")
+            # === Regime-Segmented Momentum Thresholds ===
+            if regime == MarketRegime.STRONG_UPTREND:
+                long_momentum_threshold = 0.4
+                short_momentum_threshold = -0.5
+            elif regime == MarketRegime.STRONG_DOWNTREND:
+                long_momentum_threshold = 0.7
+                short_momentum_threshold = -0.4
+            else:
+                long_momentum_threshold = 0.7
+                short_momentum_threshold = -0.5
+            # === End Regime-Segmented Thresholds ===
+
+
+            # === UPTREND MOMENTUM LONG ===
+            # Enter when trend is UP and RSI confirms strength (not overbought yet)
+            if (trend_up and
+                rsi > 52 and rsi < 75 and  # Strong but not extreme
+                current_price > ema_fast and
+                momentum_pct > long_momentum_threshold):  # Positive momentum
+
+                # Confidence scales with signal strength
+                base_confidence = min(0.4 + (rsi - 55) / 50, 0.75)
+                total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
+
+                # Dynamic risk based on ATR
+                stop_loss_pct = max(0.005, (atr / current_price) * 0.6)  # 0.5-1%
+                take_profit_pct = stop_loss_pct * 2.5  # 2.5:1 R/R
+
+                logger.info(f"📈 MOMENTUM LONG for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
+
+                return {
+                    'direction': 'LONG',
+                    'confidence': total_confidence,
+                    'stop_loss_pct': stop_loss_pct,
+                    'take_profit_pct': take_profit_pct,
+                    'reason': f'Uptrend momentum: RSI={rsi:.1f}, EMA20>{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                }
+
+            # === DOWNTREND MOMENTUM SHORT ===
+            # Enter when trend is DOWN and RSI confirms weakness (not oversold yet)
+            if (trend_down and
+                rsi < 45 and rsi > 25 and  # Weak but not extreme
+                current_price < ema_fast and
+                momentum_pct < short_momentum_threshold):  # Negative momentum (slightly relaxed)
+
+                base_confidence = min(0.4 + (45 - rsi) / 50, 0.75)
+                total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
+
+                stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
+                take_profit_pct = stop_loss_pct * 2.5
+
+                logger.info(f"📉 MOMENTUM SHORT for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
+
+                return {
+                    'direction': 'SHORT',
+                    'confidence': total_confidence,
+                    'stop_loss_pct': stop_loss_pct,
+                    'take_profit_pct': take_profit_pct,
+                    'reason': f'Downtrend momentum: RSI={rsi:.1f}, EMA20<{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                }
+
+            # === EXTREME REVERSAL (Rare, high conviction only) ===
+            # Only take reversals at EXTREME levels with confirmation
+            if rsi < 20 and momentum_pct < -5:
+                logger.info(f"🔄 EXTREME REVERSAL LONG for {symbol}: RSI {rsi:.1f} extremely oversold")
+                return {
+                    'direction': 'LONG',
+                    'confidence': 0.65,
+                    'stop_loss_pct': 0.008,
+                    'take_profit_pct': 0.02,
+                    'reason': f'Extreme reversal: RSI={rsi:.1f} < 20'
+                }
+
+            if rsi > 80 and momentum_pct > 5 and trend_up:
+                logger.info(f"🔄 EXTREME REVERSAL SHORT for {symbol}: RSI {rsi:.1f} extremely overbought")
+                return {
+                    'direction': 'SHORT',
+                    'confidence': 0.65,
+                    'stop_loss_pct': 0.008,
+                    'take_profit_pct': 0.02,
+                    'reason': f'Extreme reversal: RSI={rsi:.1f} > 80'
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error generating momentum signal for {symbol}: {e}")
+            return None

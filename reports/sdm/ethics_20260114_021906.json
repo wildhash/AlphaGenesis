@@ -1,0 +1,1702 @@
+{
+  "total_violations": 168,
+  "total_evaluations": 168,
+  "violations": [
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:36.143190",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:38.479100",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:40.797498",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:43.065548",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:45.390820",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:47.714128",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:50.035006",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:52.328693",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:54.674986",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:56.928752",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:38:59.239966",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:01.563750",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:03.889050",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:06.227718",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:08.526271",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:10.839464",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:13.139201",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:15.415705",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:17.712203",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:20.002124",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:22.333703",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:24.660728",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:26.954249",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:39:29.247516",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:32.781208",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:35.080584",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:37.394697",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:39.685841",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:42.015284",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:44.335564",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:46.621953",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:48.925222",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:51.187319",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:53.479360",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:55.776749",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:44:58.052580",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:00.391018",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:02.783167",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:05.120274",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:07.401966",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:09.703165",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:11.996575",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:14.290975",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:16.598252",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:18.897173",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:21.200697",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:23.512191",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:45:25.817141",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:29.366837",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:31.681414",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:34.005352",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:36.353282",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:38.660906",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:40.952206",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:43.270590",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:45.602449",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:47.908218",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:50.215999",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:52.506747",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:54.796925",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:57.117384",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:50:59.408011",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:01.728421",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:04.047828",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:06.353735",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:08.667477",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:10.964467",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:13.267629",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:15.573584",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:17.858714",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:20.175144",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:51:22.445594",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:26.077952",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:28.406806",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:30.764934",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:33.053784",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:35.349830",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:37.657611",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:40.001303",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:42.313866",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:44.667288",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:46.998641",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:49.308870",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:51.657200",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:53.968124",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:56.286541",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:56:58.575266",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:00.887032",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:03.184077",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:05.491293",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:07.798367",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:10.079725",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:12.403016",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:14.713717",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:17.027348",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T01:57:19.376689",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:22.891493",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:25.219352",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:27.507383",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:29.774363",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:32.101170",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:34.524664",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:36.813733",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:39.161121",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:41.486418",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:43.789748",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:46.094552",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:48.396599",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:50.756381",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:53.045313",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:55.360451",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:02:57.687212",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:00.034249",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:02.365156",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:04.693748",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:07.061388",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:09.396552",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:11.711616",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:14.031857",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:03:16.374339",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:19.885998",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:22.218574",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:24.544706",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:26.863988",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:29.142847",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:31.449660",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:33.751893",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:36.036790",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:38.378135",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:40.720798",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:43.063798",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:45.356927",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:47.694957",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:50.006906",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:52.325597",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:54.657846",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:57.011400",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:08:59.314040",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:01.639092",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:03.979700",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:06.328750",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:08.637871",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:10.974485",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:09:13.308771",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:16.808350",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:19.101053",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:21.397879",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:23.725424",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:26.021661",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:28.352874",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:30.684036",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:32.975978",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:35.280046",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:37.569539",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:39.897423",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:42.220151",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:44.582877",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:46.881911",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:49.196807",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:51.481617",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:53.795445",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:56.101387",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:14:58.399914",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:15:00.712558",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:15:03.138482",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:15:05.421458",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:15:07.736231",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    },
+    {
+      "constraint_name": "min_confidence",
+      "domain": "accountability",
+      "timestamp": "2026-01-14T02:15:10.038842",
+      "severity": "critical",
+      "current_value": 0.0,
+      "threshold": -0.4,
+      "penalty": 25.600000000000005,
+      "action_taken": "logged"
+    }
+  ],
+  "summary": {
+    "total_violations": 168,
+    "total_evaluations": 168,
+    "violation_rate": 1.0,
+    "recent_violations": 100,
+    "by_severity": {
+      "catastrophic": 0,
+      "critical": 100,
+      "warning": 0,
+      "info": 0
+    },
+    "by_domain": {
+      "accountability": 100
+    },
+    "most_violated_constraint": "min_confidence"
+  }
+}

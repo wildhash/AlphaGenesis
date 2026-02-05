@@ -1,0 +1,23 @@
+{
+  "since": "2026-01-01",
+  "symbols": [
+    "cmt_btcusdt",
+    "cmt_ethusdt",
+    "cmt_solusdt",
+    "cmt_dogeusdt",
+    "cmt_xrpusdt",
+    "cmt_adausdt",
+    "cmt_bnbusdt",
+    "cmt_ltcusdt"
+  ],
+  "dry_run": false,
+  "limit_per_symbol": 200,
+  "sleep": 0.4,
+  "total_fills": 64,
+  "eligible_orders": 64,
+  "uploaded": 38,
+  "skipped_existing": 26,
+  "errors": 0,
+  "samples": [],
+  "timestamp": "2026-01-20T15:13:17.690087+00:00"
+}

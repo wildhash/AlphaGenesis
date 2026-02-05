@@ -1,0 +1,131 @@
+{
+  "since_days": 14,
+  "since_ms": 1768791644955,
+  "total_rows": 4245,
+  "total_matched": 2000,
+  "total_sent": 2000,
+  "success": 2000,
+  "failed": 0,
+  "stage_counts": {
+    "Decision Making": 1877,
+    "Exit Decision": 41,
+    "Exit Execution": 78,
+    "Risk Check": 2,
+    "Execution": 2
+  },
+  "responses_sample": [
+    {
+      "id": "c2c3ec2e-47bd-4420-a3f3-aa230fcd602b",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001245463,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "c0a5231e-9452-4985-a3dd-f35745894b0b",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001246033,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "988c73d0-d694-4d13-b9ad-e8c44963059d",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001246600,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "8824f6ab-1dcd-4437-92d8-c05f2affe265",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001247159,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "c8849bfa-dc56-417c-bf06-81473cd537b4",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001247729,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "8f8db9e6-1f20-42ec-8fc8-ca1897163cde",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001248293,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "746aa879-754d-43f7-8fba-928bc45246e6",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001248848,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "479ea392-1075-478b-b3fd-9d6f13d7207e",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001249410,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "8455ea9d-8cd6-4868-85ee-e09ed50f3e91",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001249975,
+        "data": "upload success"
+      }
+    },
+    {
+      "id": "a26f0a65-9346-462a-bd04-d280bb98b6d2",
+      "stage": "Decision Making",
+      "success": true,
+      "response": {
+        "code": "00000",
+        "msg": "success",
+        "requestTime": 1770001250541,
+        "data": "upload success"
+      }
+    }
+  ],
+  "started_at": "2026-02-02T03:00:44.969452+00:00",
+  "finished_at": null,
+  "last_id": "6b00fa98-9b25-4aa3-9bed-58e6a23f0300"
+}

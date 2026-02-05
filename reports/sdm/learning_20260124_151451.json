@@ -1,0 +1,24 @@
+{
+  "total_feedback": 1,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_arbitrage": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.4961428571428571
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_19_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-01-24T14:39:52.635552",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.461428571428571
+    }
+  ]
+}

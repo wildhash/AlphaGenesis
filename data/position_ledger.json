@@ -1,0 +1,40 @@
+{
+  "positions": {
+    "cmt_btcusdt": {
+      "symbol": "cmt_btcusdt",
+      "side": "SHORT",
+      "size": 0.013,
+      "entry_price": 96237.4,
+      "open_time": 1768445774.5842054,
+      "position_id": "c0bb687b-d37b-4876-842a-7706d79df677",
+      "client_order_id": null,
+      "order_id": null,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "last_update_ts": 1768445774.5842054,
+      "last_exchange_sync_ts": 1768445774.5842056
+    },
+    "cmt_bnbusdt": {
+      "symbol": "cmt_bnbusdt",
+      "side": "LONG",
+      "size": 1.4,
+      "entry_price": 932.06,
+      "open_time": 1768447613.706297,
+      "position_id": "fadf48a6-7b19-44ab-af36-3e9585b98d43",
+      "client_order_id": null,
+      "order_id": null,
+      "unrealized_pnl": 0.0,
+      "realized_pnl": 0.0,
+      "last_update_ts": 1768447613.706297,
+      "last_exchange_sync_ts": 1768447613.7062972
+    }
+  },
+  "cooldown_until": {},
+  "trades_today": {
+    "cmt_btcusdt": 1,
+    "cmt_bnbusdt": 1
+  },
+  "last_counter_date": "2026-01-15",
+  "closed_trades": [],
+  "last_save": 1768449732.6807404
+}
