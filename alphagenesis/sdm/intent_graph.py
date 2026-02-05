@@ -352,6 +352,10 @@ class IntentGraph:
         self.time_step += 1
         self.propagate_activation()
         self.decay_all()
+        if "exploit_opportunities" in self.nodes:
+            self.nodes["exploit_opportunities"].activation_level = max(
+                self.nodes["exploit_opportunities"].activation_level, 0.05
+            )
 
     def get_state_summary(self) -> Dict[str, Any]:
         """Get current state of the intent graph."""

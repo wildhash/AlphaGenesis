@@ -6,8 +6,8 @@ Implements RL-based trading agents using various algorithms
 """
 
 import numpy as np
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 
@@ -74,20 +74,21 @@ class TradingEnvironment(gym.Env):
         
         self.reset()
     
-    def reset(self) -> np.ndarray:
+    def reset(self, *, seed: Optional[int] = None, options: Optional[Dict[str, Any]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
         """
         Reset environment to initial state.
         
         Returns:
             Initial observation
         """
+        super().reset(seed=seed)
         self.current_step = self.lookback_window
         self.balance = self.initial_balance
         self.shares_held = 0.0
         self.total_value = self.initial_balance
         self.trades = []
         
-        return self._get_observation()
+        return self._get_observation(), {}
     
     def _get_observation(self) -> np.ndarray:
         """
@@ -115,7 +116,7 @@ class TradingEnvironment(gym.Env):
         observation = np.concatenate([market_data, portfolio_state])
         return observation.astype(np.float32)
     
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict[str, Any]]:
         """
         Execute one step in the environment.
         
@@ -123,7 +124,7 @@ class TradingEnvironment(gym.Env):
             action: Action to take (0=Hold, 1=Buy, 2=Sell)
             
         Returns:
-            Tuple of (observation, reward, done, info)
+            Tuple of (observation, reward, terminated, truncated, info)
         """
         current_price = self.df.iloc[self.current_step]["close"]
         prev_value = self.balance + self.shares_held * current_price
@@ -146,14 +147,15 @@ class TradingEnvironment(gym.Env):
         
         # Move to next step
         self.current_step += 1
-        done = self.current_step >= len(self.df) - 1
+        terminated = self.current_step >= len(self.df) - 1
+        truncated = False
         
         # Calculate reward
         new_value = self.balance + self.shares_held * current_price
         reward = (new_value - prev_value) / prev_value
         
         # Get next observation
-        observation = self._get_observation() if not done else np.zeros(self.observation_space.shape)
+        observation = self._get_observation() if not terminated else np.zeros(self.observation_space.shape)
         
         info = {
             "balance": self.balance,
@@ -162,7 +164,7 @@ class TradingEnvironment(gym.Env):
             "trades": len(self.trades),
         }
         
-        return observation, reward, done, info
+        return observation, reward, terminated, truncated, info
     
     def render(self, mode: str = "human") -> None:
         """

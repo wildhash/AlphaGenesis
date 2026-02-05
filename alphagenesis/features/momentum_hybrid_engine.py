@@ -5,6 +5,7 @@ Trend-following strategy with AI confirmation for WEEX AI Wars
 import numpy as np
 from typing import Dict, Optional
 from loguru import logger
+from alphagenesis.sdm.semantic_binding import MarketRegime
 
 
 class MomentumHybridEngine:
@@ -72,7 +73,8 @@ class MomentumHybridEngine:
         candles: list,
         current_price: float,
         symbol: str,
-        model_confidence: float = 0.6
+        model_confidence: float = 0.6,
+        regime: MarketRegime | None = None
     ) -> Optional[Dict]:
         """
         Generate MOMENTUM/TREND-FOLLOWING signal (NOT reversal).
@@ -84,6 +86,8 @@ class MomentumHybridEngine:
         Returns signal dict or None
         """
         try:
+            if regime is None:
+                regime = MarketRegime.UNKNOWN
             # Extract OHLC data
             closes = []
             highs = []
@@ -98,8 +102,9 @@ class MomentumHybridEngine:
                     closes.append(float(c[4]))  # Close
                     highs.append(float(c[2]))   # High
                     lows.append(float(c[3]))    # Low
-
+            logger.info(f"DIAG_MOMENTUM_LEN symbol={symbol} candles={len(closes)}")
             if len(closes) < 50:
+                logger.info(f"DIAG_MOMENTUM_SHORT_CANDLES symbol={symbol} candles={len(closes)}")
                 return None
 
             prices = np.array(closes)
@@ -111,6 +116,7 @@ class MomentumHybridEngine:
             ema_slow = self._calculate_ema(prices, self.ema_slow)
             rsi = self._calculate_rsi(prices)
             atr = self._calculate_atr(highs_arr, lows_arr, prices)
+            atr_pct = (atr / current_price * 100.0) if (current_price and atr) else 0.0
 
             # Trend detection
             trend_up = ema_fast > ema_slow
@@ -119,14 +125,57 @@ class MomentumHybridEngine:
             # Momentum (10-period rate of change)
             momentum_pct = ((prices[-1] - prices[-10]) / prices[-10]) * 100
 
+            low_vol_flag = (regime == MarketRegime.LOW_VOLATILITY)
+            logger.info(
+                f"DIAG_MOMENTUM symbol={symbol} regime={regime} momentum_pct={momentum_pct:.4f} rsi={rsi:.2f} low_vol={low_vol_flag}"
+            )
+
+            # Soft LOW_VOL gate: allow only extreme impulse moves to avoid churn.
+            if regime == MarketRegime.LOW_VOLATILITY:
+                logger.info("LOW_VOL gate reached")
+                allow = False
+                # LOW_VOL_SHORT_GATE_X3_WITH_ATR: conservative short unlock w/ range expansion confirmation
+                if momentum_pct <= -3.0 and rsi <= 45 and atr_pct >= 0.25:
+                    return {
+                        'direction': 'SHORT',
+                        'confidence': 0.68,
+                        'stop_loss_pct': 0.008,
+                        'take_profit_pct': 0.02,
+                        'reason': 'LOW_VOL_SHORT_GATE_X3_WITH_ATR'
+                    }
+                if momentum_pct <= -3.0 and rsi <= 45 and atr_pct < 0.25:
+                    logger.info(
+                        f"LOW_VOL_SHORT_GATE_X3_WITH_ATR blocked symbol={symbol} momentum_pct={momentum_pct:.2f} rsi={rsi:.1f} atr_pct={atr_pct:.3f}"
+                    )
+                if momentum_pct < -2.0 and rsi < 48 and trend_down:
+                    allow = True
+                if momentum_pct > 2.0 and rsi > 52 and trend_up:
+                    allow = True
+                if not allow:
+                    logger.info(f"LOW_VOL gate blocked: momentum_pct={momentum_pct:.3f} rsi={rsi:.1f} trend_up={trend_up} trend_down={trend_down}")
+
+                    return "no_signal"
+
             logger.info(f"{symbol} - RSI: {rsi:.1f}, EMA20: {ema_fast:.2f}, EMA50: {ema_slow:.2f}, Momentum: {momentum_pct:.2f}%")
+            # === Regime-Segmented Momentum Thresholds ===
+            if regime == MarketRegime.STRONG_UPTREND:
+                long_momentum_threshold = 0.4
+                short_momentum_threshold = -0.5
+            elif regime == MarketRegime.STRONG_DOWNTREND:
+                long_momentum_threshold = 0.7
+                short_momentum_threshold = -0.4
+            else:
+                long_momentum_threshold = 0.7
+                short_momentum_threshold = -0.5
+            # === End Regime-Segmented Thresholds ===
+
 
             # === UPTREND MOMENTUM LONG ===
             # Enter when trend is UP and RSI confirms strength (not overbought yet)
             if (trend_up and
-                rsi > 55 and rsi < 75 and  # Strong but not extreme
+                rsi > 52 and rsi < 75 and  # Strong but not extreme
                 current_price > ema_fast and
-                momentum_pct > 1.0):  # Positive momentum
+                momentum_pct > long_momentum_threshold):  # Positive momentum
 
                 # Confidence scales with signal strength
                 base_confidence = min(0.4 + (rsi - 55) / 50, 0.75)
@@ -151,7 +200,7 @@ class MomentumHybridEngine:
             if (trend_down and
                 rsi < 45 and rsi > 25 and  # Weak but not extreme
                 current_price < ema_fast and
-                momentum_pct < -1.0):  # Negative momentum
+                momentum_pct < short_momentum_threshold):  # Negative momentum (slightly relaxed)
 
                 base_confidence = min(0.4 + (45 - rsi) / 50, 0.75)
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
@@ -171,7 +220,14 @@ class MomentumHybridEngine:
 
             # === EXTREME REVERSAL (Rare, high conviction only) ===
             # Only take reversals at EXTREME levels with confirmation
-            if rsi < 20 and momentum_pct < -5 and trend_down:
+            # Patch B: block knife-catch longs in strong downtrend
+            if regime == MarketRegime.STRONG_DOWNTREND and rsi < 20 and momentum_pct <= -0.25:
+                logger.info(
+                    f"BLOCK_EXTREME_REVERSAL_LONG_STRONG_DOWNTREND symbol={symbol} rsi={rsi:.1f} momentum_pct={momentum_pct:.3f}"
+                )
+                return "no_signal"
+
+            if rsi < 20 and momentum_pct < -5:
                 logger.info(f"🔄 EXTREME REVERSAL LONG for {symbol}: RSI {rsi:.1f} extremely oversold")
                 return {
                     'direction': 'LONG',

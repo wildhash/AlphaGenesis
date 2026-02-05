@@ -56,7 +56,9 @@ class SimpleMomentumStrategy:
         self,
         candles: list,
         current_price: float,
-        symbol: str
+        symbol: str,
+        regime=None,
+        **kwargs
     ) -> Optional[Dict]:
         """
         Generate trading signal - PIVOTED TO MOMENTUM TREND-FOLLOWING.
@@ -76,6 +78,7 @@ class SimpleMomentumStrategy:
                 candles=candles,
                 current_price=current_price,
                 symbol=symbol,
+                regime=regime,
                 model_confidence=0.6  # Can be replaced with actual ML model output
             )
 

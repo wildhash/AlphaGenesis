@@ -48,6 +48,7 @@ class WEEXClient:
     CURRENT_ORDERS_ENDPOINT = "/capi/v2/order/current"
     ORDER_HISTORY_ENDPOINT = "/capi/v2/order/history"
     TRADE_FILLS_ENDPOINT = "/capi/v2/order/fills"
+    AI_LOG_ENDPOINT = "/capi/v2/order/uploadAiLog"
 
     def __init__(
         self,
@@ -166,7 +167,21 @@ class WEEXClient:
                 return response.json()
             else:
                 logger.error(f"API error: {response.status_code} - {response.text}")
-                return {"error": response.text, "status_code": response.status_code}
+                error_payload = None
+                try:
+                    error_payload = response.json()
+                except ValueError:
+                    try:
+                        error_payload = json.loads(response.text)
+                    except (TypeError, ValueError):
+                        error_payload = None
+
+                error_result = {"error": response.text, "status_code": response.status_code}
+                if isinstance(error_payload, dict):
+                    for key in ("code", "msg", "message", "data", "requestTime"):
+                        if key in error_payload:
+                            error_result[key] = error_payload.get(key)
+                return error_result
                 
         except requests.exceptions.RequestException as e:
             logger.error(f"WEEX API request failed: {e}")
@@ -413,7 +428,39 @@ class WEEXClient:
         }
         
         logger.info(f"Placing order: {data}")
-        return self._request("POST", self.PLACE_ORDER_ENDPOINT, data=data, signed=True)
+        response = self._request("POST", self.PLACE_ORDER_ENDPOINT, data=data, signed=True)
+        try:
+            order_id = None
+            code = None
+            msg = None
+            status_code = None
+            summary = None
+            if isinstance(response, dict):
+                order_id = response.get("order_id")
+                code = response.get("code")
+                msg = response.get("msg") or response.get("message")
+                status_code = response.get("status_code")
+                data_block = response.get("data")
+                if isinstance(data_block, dict):
+                    order_id = order_id or data_block.get("orderId") or data_block.get("order_id")
+                summary = str(response)
+            else:
+                summary = str(response)
+            if summary:
+                summary = summary[:500]
+            logger.info(
+                "WEEX_ORDER_RESPONSE symbol={} client_oid={} order_id={} code={} status_code={} msg={} summary={}",
+                data.get("symbol"),
+                data.get("client_oid"),
+                order_id,
+                code,
+                status_code,
+                msg,
+                summary,
+            )
+        except Exception as e:
+            logger.warning("WEEX_ORDER_RESPONSE parse failed: {}", e)
+        return response
     
     def cancel_order(self, symbol: str, order_id: str) -> Dict[str, Any]:
         """
@@ -477,6 +524,18 @@ class WEEXClient:
         """
         params = {"symbol": symbol, "pageSize": page_size}
         return self._request("GET", self.TRADE_FILLS_ENDPOINT, params=params, signed=True)
+
+    def upload_ai_log(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Upload AI decision log to WEEX AI Wars endpoint.
+
+        Args:
+            payload: AI log payload with stage, model, input, output, explanation, optional orderId
+
+        Returns:
+            API response dict
+        """
+        return self._request("POST", self.AI_LOG_ENDPOINT, data=payload, signed=True)
 
     # =========================================================================
     # CONVENIENCE METHODS

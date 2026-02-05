@@ -76,33 +76,7 @@ class PositionMonitor:
     def _check_positions(self):
         """Check all positions for closes/updates."""
         try:
-            # Fetch current exchange state
-            account = self.weex.get_account()
-
-            if 'position' not in account:
-                exchange_positions = []
-            else:
-                exchange_positions = account['position']
-
-            # Build exchange position map
-            exchange_map = {}
-            for pos in exchange_positions:
-                size = float(pos.get('size', 0))
-                if size > 0:  # Only active positions
-                    symbol = pos['symbol']
-                    side_value = pos.get('side', 1)
-                    if isinstance(side_value, str):
-                        side_str = side_value.upper()
-                    else:
-                        side_num = int(side_value)
-                        side_str = 'LONG' if side_num == 1 else 'SHORT'
-
-                    exchange_map[symbol] = {
-                        'side': side_str,
-                        'size': size,
-                        'entry_price': float(pos.get('open_price', 0)),
-                        'unrealized_pnl': float(pos.get('unrealised_pnl', 0))
-                    }
+            exchange_map = self._fetch_exchange_positions()
 
             # Check all ledger positions
             ledger_positions = self.ledger.get_all_positions()
@@ -118,9 +92,12 @@ class PositionMonitor:
 
                 else:
                     # Position still open, update unrealized P&L
+                    current_price = self._get_market_price(symbol)
+                    if current_price <= 0:
+                        current_price = exchange_map[symbol].get('mark_price', 0.0)
                     self.ledger.update_unrealized_pnl(
                         symbol,
-                        exchange_map[symbol]['entry_price']  # Use current price
+                        current_price
                     )
 
         except Exception as e:
@@ -139,8 +116,10 @@ class PositionMonitor:
             # Try to determine close reason
             close_reason = self._determine_close_reason(symbol, ledger_pos)
 
-            # Estimate close price (use entry if unknown)
-            close_price = ledger_pos.entry_price  # Conservative estimate
+            # Estimate close price (use current market price if available)
+            close_price = self._get_market_price(symbol)
+            if close_price <= 0:
+                close_price = ledger_pos.entry_price
 
             # Calculate realized P&L (approximate)
             if ledger_pos.side == 'LONG':
@@ -189,6 +168,15 @@ class PositionMonitor:
             from alphagenesis.learning import TradeEvent
             self.journal.log_trade_event(TradeEvent(**trade_event))
 
+            if ledger_pos.order_id:
+                self.journal.update_decision_outcome(
+                    order_id=ledger_pos.order_id,
+                    realized_pnl=realized_pnl,
+                    fees_paid=fees_estimated,
+                    holding_time=holding_seconds,
+                    reward=reward
+                )
+
             # Update bandit with reward
             # Need to know which strategy was used - check ledger or journal
             # For now, assume 'momentum' (TODO: store strategy in position)
@@ -204,6 +192,114 @@ class PositionMonitor:
 
         except Exception as e:
             logger.error(f"Error handling position close for {symbol}: {e}", exc_info=True)
+
+    def _get_market_price(self, symbol: str) -> float:
+        try:
+            ticker = self.weex.get_ticker(symbol)
+        except Exception as e:
+            logger.warning(f"Failed fetching ticker for {symbol}: {e}")
+            return 0.0
+
+        if isinstance(ticker, dict):
+            if 'data' in ticker and isinstance(ticker['data'], dict):
+                try:
+                    return float(ticker['data'].get('last', 0) or 0)
+                except (TypeError, ValueError):
+                    return 0.0
+            try:
+                return float(ticker.get('last', 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+        return 0.0
+
+    def _fetch_exchange_positions(self) -> Dict[str, Dict]:
+        exchange_map: Dict[str, Dict] = {}
+        ledger_positions = self.ledger.get_all_positions()
+
+        for symbol in ledger_positions.keys():
+            try:
+                response = self.weex.get_position(symbol)
+            except Exception as e:
+                logger.warning(f"Failed fetching position for {symbol}: {e}")
+                continue
+
+            if isinstance(response, dict) and isinstance(response.get('position'), list):
+                data = response.get('position')
+            else:
+                data = response.get('data') if isinstance(response, dict) else response
+            if isinstance(data, dict):
+                for key in ('position', 'positions', 'data'):
+                    if isinstance(data.get(key), list):
+                        data = data.get(key)
+                        break
+
+            if not data:
+                continue
+
+            if isinstance(data, list):
+                pos_list = data
+            elif isinstance(data, dict):
+                pos_list = [data]
+            else:
+                continue
+
+            for pos in pos_list:
+                size = 0.0
+                for key in ('size', 'total', 'position', 'pos', 'qty'):
+                    if key in pos and pos[key] is not None:
+                        try:
+                            size = float(pos[key])
+                        except (TypeError, ValueError):
+                            size = 0.0
+                        break
+                if size == 0:
+                    continue
+
+                side_value = pos.get('side') or pos.get('hold_side') or pos.get('holdSide')
+                if isinstance(side_value, str):
+                    side_str = side_value.upper()
+                else:
+                    try:
+                        side_str = 'LONG' if int(side_value or 1) == 1 else 'SHORT'
+                    except (TypeError, ValueError):
+                        side_str = 'LONG'
+
+                entry_price = 0.0
+                for key in ('open_price', 'avg_open_price', 'avgOpenPrice', 'entry_price'):
+                    if key in pos and pos[key] is not None:
+                        try:
+                            entry_price = float(pos[key])
+                        except (TypeError, ValueError):
+                            entry_price = 0.0
+                        break
+
+                mark_price = 0.0
+                for key in ('mark_price', 'markPrice', 'fair_price', 'last', 'last_price'):
+                    if key in pos and pos[key] is not None:
+                        try:
+                            mark_price = float(pos[key])
+                        except (TypeError, ValueError):
+                            mark_price = 0.0
+                        break
+
+                unrealized_pnl = 0.0
+                for key in ('unrealised_pnl', 'unrealized_pnl', 'unrealized_profit', 'floating_pl', 'upnl', 'unrealizePnl'):
+                    if key in pos and pos[key] is not None:
+                        try:
+                            unrealized_pnl = float(pos[key])
+                        except (TypeError, ValueError):
+                            unrealized_pnl = 0.0
+                        break
+
+                exchange_map[symbol] = {
+                    'side': side_str,
+                    'size': abs(size),
+                    'entry_price': entry_price,
+                    'mark_price': mark_price,
+                    'unrealized_pnl': unrealized_pnl
+                }
+
+        return exchange_map
 
     def _determine_close_reason(self, symbol: str, ledger_pos) -> str:
         """

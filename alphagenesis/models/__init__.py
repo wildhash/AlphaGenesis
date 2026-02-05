@@ -11,7 +11,15 @@ Components:
     - Model training and evaluation utilities
 """
 
-from alphagenesis.models.lstm_model import LSTMModel
+import logging
+logger = logging.getLogger(__name__)
+
+
+try:
+    from alphagenesis.models.lstm_model import LSTMModel
+except ModuleNotFoundError as e:
+    LSTMModel = None
+    logger.warning("LSTM disabled: %s", e)
 from alphagenesis.models.transformer_model import TransformerModel
 from alphagenesis.models.rl_agent import RLTradingAgent
 from alphagenesis.models.ensemble import EnsemblePredictor
