@@ -1082,6 +1082,21 @@ class SDMTradingEngine:
                 if blocked:
                     logger.info("DIAG_LOOP_SKIP symbol={} reason=straddle_blocked", symbol)
                     logger.info(f"⏸ STRADDLE ACTIVE - skipping normal strategy for {symbol}")
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": None,
+                            "signal": None,
+                            "confidence": 0.0,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "STRADDLE_BLOCKED",
+                        },
+                        explanation="No-trade: straddle state active; normal strategy skipped.",
+                    )
                     continue
 
                 # Determine market regime
@@ -1112,6 +1127,21 @@ class SDMTradingEngine:
                 )
 
                 if not proposed_action or proposed_action.get('direction') == 'HOLD':
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": regime.value if hasattr(regime, "value") else str(regime),
+                            "signal": None,
+                            "confidence": 0.0,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "NO_SIGNAL",
+                        },
+                        explanation="No-trade: no actionable signal or HOLD direction.",
+                    )
                     continue
 
                 self._augment_action_with_risk_metrics(proposed_action)
@@ -1125,6 +1155,21 @@ class SDMTradingEngine:
                         symbol=symbol,
                         action=proposed_action,
                         intent_graph_blocked=True
+                    )
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": proposed_action.get("regime"),
+                            "signal": proposed_action.get("reason"),
+                            "confidence": proposed_action.get("confidence"),
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "INTENT_GRAPH_REJECTED",
+                        },
+                        explanation=f"No-trade: intent graph rejected action ({reasoning}).",
                     )
                     continue
 
