@@ -1593,12 +1593,21 @@ class SDMTradingEngine:
             risk_approved = True
             veto_reasons = []
 
+            positions = self.position_ledger.get_all_positions()
+            unrealized_pnl, margin_used, total_notional = self._calculate_position_metrics(
+                positions
+            )
+            account_state = AccountState(
+                balance=self.current_capital,
+                equity=self.current_capital,
+                margin_used=margin_used,
+                unrealized_pnl=unrealized_pnl,
+                daily_pnl=self.daily_pnl,
+                peak_balance_today=self.peak_balance_today,
+                total_notional=total_notional
+            )
+
             if ledger_approved and not gross_exposure_blocked:  # Only check risk if ledger passed AND under gross cap
-                # Build account state with REAL values from market observation
-                positions = self.position_ledger.get_all_positions()
-                unrealized_pnl, margin_used, total_notional = self._calculate_position_metrics(
-                    positions
-                )
                 # Rebuild symbol exposure from live positions to avoid stale risk veto
                 self.risk_manager.symbol_exposure = {}
                 for pos in positions:
@@ -1626,16 +1635,6 @@ class SDMTradingEngine:
                             notional = abs(size) * mark_price
                     if notional:
                         self.risk_manager.update_symbol_exposure(getter('symbol'), notional)
-
-                account_state = AccountState(
-                    balance=self.current_capital,
-                    equity=self.current_capital,
-                    margin_used=margin_used,
-                    unrealized_pnl=unrealized_pnl,
-                    daily_pnl=self.daily_pnl,
-                    peak_balance_today=self.peak_balance_today,
-                    total_notional=total_notional
-                )
 
                 risk_approved, veto_reasons = self.risk_manager.approve(
                     trade_intent,
