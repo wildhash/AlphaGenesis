@@ -188,7 +188,8 @@ class SDMTradingEngine:
             position_ledger=self.position_ledger,
             decision_journal=self.journal,
             bandit_allocator=self.bandit,
-            poll_interval_seconds=30
+            poll_interval_seconds=30,
+            ai_log_bus=self.ai_log_bus
         )
         logger.info("✓ Position Monitor initialized - will start with engine")
 
@@ -1347,6 +1348,10 @@ class SDMTradingEngine:
 
         # Extract features for journal logging
         features = signal.get('features', {})
+        momentum_pct = features.get('momentum_pct')
+        rsi = features.get('rsi')
+        atr = features.get('atr')
+        funding_rate = features.get('funding_rate')
 
         stop_loss = signal.get('stop_loss')
         take_profit = signal.get('take_profit')
@@ -1384,6 +1389,8 @@ class SDMTradingEngine:
             'features': features
         }
 
+        current_positions = len(self.position_ledger.get_all_positions())
+        risk_headroom = None
         self._emit_ai_log(
             stage="Strategy Evaluation",
             model=f"SDM:{chosen_strategy}",
@@ -1394,6 +1401,12 @@ class SDMTradingEngine:
                 "price": price,
                 "balance": context.get("balance"),
                 "signal": action.get("reason"),
+                "momentum_pct": momentum_pct,
+                "rsi": rsi,
+                "atr": atr,
+                "funding_rate": funding_rate,
+                "current_positions": current_positions,
+                "risk_headroom": risk_headroom,
             },
             output_payload={
                 "direction": action.get("direction"),
@@ -1403,7 +1416,18 @@ class SDMTradingEngine:
                 "stop_loss": action.get("stop_loss"),
                 "take_profit": action.get("take_profit"),
             },
-            explanation=f"Strategy evaluation from {chosen_strategy} for {symbol}."
+            explanation=(
+                "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
+                "chose {direction} conf={conf} reason={reason}."
+            ).format(
+                regime=regime_str,
+                mom=momentum_pct,
+                rsi=rsi,
+                atr=atr,
+                direction=action.get("direction"),
+                conf=action.get("confidence"),
+                reason=action.get("reason"),
+            )
         )
 
         logger.info(
@@ -1622,8 +1646,25 @@ class SDMTradingEngine:
                 if not risk_approved:
                     logger.error(f"❌ RISK VETO: {[v.message for v in veto_reasons]}")
 
+            block_reason = None
+            if not ledger_approved:
+                block_reason = ledger_reason
+            elif gross_exposure_blocked:
+                block_reason = gross_exposure_reason
+            elif not risk_approved and veto_reasons:
+                block_reason = veto_reasons[0].message
+
+            gate_results = {
+                "ledger_ok": ledger_approved,
+                "gross_exposure_ok": not gross_exposure_blocked,
+                "risk_ok": risk_approved,
+                "min_size_floor_applied": action.get("size_floor_applied"),
+                "straddle_bypassed": action.get("straddle_bypassed"),
+                "block_reason": block_reason,
+            }
+
             self._emit_ai_log(
-                stage="Risk Check",
+                stage="Risk & Constraints",
                 model="RiskManagerVeto",
                 input_payload={
                     "symbol": symbol,
@@ -1633,12 +1674,22 @@ class SDMTradingEngine:
                     "balance": account_state.balance,
                     "equity": account_state.equity,
                     "margin_used": account_state.margin_used,
+                    "gate_results": gate_results,
                 },
                 output_payload={
                     "approved": risk_approved,
                     "veto_reasons": [v.message for v in veto_reasons],
+                    "gate_results": gate_results,
                 },
-                explanation="Risk manager approval check."
+                explanation=(
+                    "Risk: ledger_ok={ledger_ok} risk_ok={risk_ok} gross_ok={gross_ok}; "
+                    "block_reason={block_reason}."
+                ).format(
+                    ledger_ok=ledger_approved,
+                    risk_ok=risk_approved,
+                    gross_ok=not gross_exposure_blocked,
+                    block_reason=block_reason,
+                )
             )
 
             # === STEP 4: Decision Journal - ALWAYS LOG ===
@@ -1692,6 +1743,14 @@ class SDMTradingEngine:
             confidence = action.get("confidence")
             confidence_str = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "n/a"
 
+            gate_results = {
+                "ledger_ok": ledger_approved,
+                "gross_exposure_ok": not gross_exposure_blocked,
+                "risk_ok": risk_approved,
+                "min_size_floor_applied": action.get("size_floor_applied"),
+                "straddle_bypassed": action.get("straddle_bypassed"),
+                "block_reason": block_reason,
+            }
             self._emit_ai_log(
                 stage="Decision Making",
                 model="AlphaGenesis-SDM-v1",
@@ -1703,6 +1762,7 @@ class SDMTradingEngine:
                     "momentum_pct": momentum_pct,
                     "atr": atr,
                     "rsi": rsi,
+                    "gate_results": gate_results,
                 },
                 output_payload={
                     "action": action.get("direction"),
@@ -1710,12 +1770,23 @@ class SDMTradingEngine:
                     "risk_approved": risk_approved,
                     "ledger_approved": ledger_approved,
                     "gross_exposure_blocked": gross_exposure_blocked,
+                    "gate_results": gate_results,
                 },
                 explanation=(
-                    f"Features: regime={action.get('regime')}, momentum_pct={momentum_pct}, rsi={rsi}, atr={atr}. "
-                    f"Gates: ledger_approved={ledger_approved}, gross_exposure_blocked={gross_exposure_blocked}, "
-                    f"risk_approved={risk_approved}. Decision: {action.get('direction')} "
-                    f"due to {action.get('reason')} (confidence={confidence_str})."
+                    "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
+                    "chose {direction} conf={conf} reason={reason}; "
+                    "gates ledger_ok={ledger_ok} risk_ok={risk_ok} gross_ok={gross_ok}."
+                ).format(
+                    regime=action.get("regime"),
+                    mom=momentum_pct,
+                    rsi=rsi,
+                    atr=atr,
+                    direction=action.get("direction"),
+                    conf=confidence_str,
+                    reason=action.get("reason"),
+                    ledger_ok=ledger_approved,
+                    risk_ok=risk_approved,
+                    gross_ok=not gross_exposure_blocked,
                 ),
             )
 
@@ -1795,14 +1866,27 @@ class SDMTradingEngine:
                 if isinstance(result, dict):
                     result_order_id = result.get('order_id') or result.get('client_oid')
 
+                exchange_response = {
+                    "orderId": result_order_id,
+                    "status": result.get("status") if isinstance(result, dict) else None,
+                    "msg": result.get("msg") if isinstance(result, dict) else None,
+                }
+                order_params = {
+                    "symbol": symbol,
+                    "side": side,
+                    "size": action.get("position_size"),
+                    "entry_price": action.get("entry_price"),
+                    "is_market": True,
+                }
                 self._emit_ai_log(
-                    stage="Execution",
+                    stage="Order Execution",
                     model=f"SDM:{action.get('strategy', 'unknown')}",
                     input_payload={
                         "symbol": symbol,
                         "side": side,
                         "size": action.get("position_size"),
                         "entry_price": action.get("entry_price"),
+                        "order_params": order_params,
                     },
                     output_payload={
                         "success": success,
@@ -1810,8 +1894,16 @@ class SDMTradingEngine:
                         "code": result.get("code") if isinstance(result, dict) else None,
                         "msg": result.get("msg") if isinstance(result, dict) else None,
                         "status_code": result.get("status_code") if isinstance(result, dict) else None,
+                        "exchange_response": exchange_response,
                     },
-                    explanation="Order execution result.",
+                    explanation=(
+                        "Exec: size={size} price={price}; orderId={order_id} status={status}."
+                    ).format(
+                        size=action.get("position_size"),
+                        price=action.get("entry_price"),
+                        order_id=result_order_id,
+                        status=exchange_response.get("status"),
+                    ),
                     order_id=result_order_id
                 )
 

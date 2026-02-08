@@ -29,13 +29,15 @@ class PositionMonitor:
         position_ledger,
         decision_journal,
         bandit_allocator,
-        poll_interval_seconds: int = 30
+        poll_interval_seconds: int = 30,
+        ai_log_bus=None
     ):
         self.weex = weex_client
         self.ledger = position_ledger
         self.journal = decision_journal
         self.bandit = bandit_allocator
         self.poll_interval = poll_interval_seconds
+        self.ai_log_bus = ai_log_bus
 
         self.is_running = False
         self.monitor_thread = None
@@ -145,6 +147,9 @@ class PositionMonitor:
             # Log trade event to journal
             close_time = time.time()
             holding_seconds = close_time - ledger_pos.open_time
+            move_pct = None
+            if ledger_pos.entry_price:
+                move_pct = abs(close_price - ledger_pos.entry_price) / ledger_pos.entry_price * 100.0
 
             trade_event = {
                 'timestamp': close_time,
@@ -167,6 +172,52 @@ class PositionMonitor:
 
             from alphagenesis.learning import TradeEvent
             self.journal.log_trade_event(TradeEvent(**trade_event))
+
+            if self.ai_log_bus:
+                try:
+                    entry_reason = getattr(ledger_pos, "entry_reason", None)
+                    stop_tp_context = {
+                        "stop_loss": getattr(ledger_pos, "stop_loss", None),
+                        "take_profit": getattr(ledger_pos, "take_profit", None),
+                    }
+                    input_payload = {
+                        "symbol": symbol,
+                        "entry_reason": entry_reason,
+                        "entry_price": ledger_pos.entry_price,
+                        "last_price": close_price,
+                        "size": ledger_pos.size,
+                        "age_seconds": holding_seconds,
+                        "move_pct": move_pct,
+                        "exit_reason": close_reason,
+                        "stop_tp_context": stop_tp_context,
+                    }
+                    output_payload = {
+                        "exit_reason": close_reason,
+                        "realized_pnl": realized_pnl,
+                        "fees_estimated": fees_estimated,
+                        "holding_seconds": holding_seconds,
+                    }
+                    explanation = (
+                        "Exit: reason={reason} entry_reason={entry_reason} age_s={age_s} move_pct={move_pct}; "
+                        "pnl={pnl} fees={fees}."
+                    ).format(
+                        reason=close_reason,
+                        entry_reason=entry_reason,
+                        age_s=int(holding_seconds),
+                        move_pct=move_pct,
+                        pnl=realized_pnl,
+                        fees=fees_estimated,
+                    )[:1000]
+                    self.ai_log_bus.emit(
+                        stage="Exit Decision",
+                        model="PositionMonitor",
+                        input_payload=input_payload,
+                        output_payload=output_payload,
+                        explanation=explanation,
+                        order_id=getattr(ledger_pos, "order_id", None),
+                    )
+                except Exception as exc:
+                    logger.warning("AI exit log emit failed: {}", exc)
 
             if ledger_pos.order_id:
                 self.journal.update_decision_outcome(

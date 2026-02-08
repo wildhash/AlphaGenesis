@@ -239,24 +239,63 @@ class BreakoutStraddleManager:
         if not self.ai_log_bus:
             return
         try:
+            now = time.time()
+            entry_time = input_payload.get("entry_time")
+            age_s = input_payload.get("age_s")
+            if age_s is None and entry_time:
+                age_s = now - entry_time
+            entry_price = input_payload.get("entry_price")
+            last_price = input_payload.get("last_price")
+            move_pct = input_payload.get("move_pct")
+            if move_pct is None and entry_price and last_price:
+                move_pct = abs(last_price - entry_price) / entry_price * 100.0
+
+            stop_tp_context = {
+                "stop_loss": input_payload.get("stop_loss"),
+                "take_profit": input_payload.get("take_profit"),
+            }
+            input_payload.update({
+                "exit_reason": reason,
+                "age_seconds": age_s,
+                "move_pct": move_pct,
+                "entry_reason": input_payload.get("entry_reason"),
+                "stop_tp_context": stop_tp_context,
+            })
+            output_payload = output_payload or {}
+            output_payload.update({
+                "exit_reason": reason,
+                "age_seconds": age_s,
+                "move_pct": move_pct,
+                "stop_tp_context": stop_tp_context,
+            })
             ctx = {
                 "state": input_payload.get("state"),
                 "entry_reason": input_payload.get("entry_reason"),
                 "entry_price": input_payload.get("entry_price"),
                 "last_price": input_payload.get("last_price"),
                 "size": input_payload.get("size"),
-                "age_s": input_payload.get("age_s"),
-                "move_pct": input_payload.get("move_pct"),
+                "age_s": age_s,
+                "move_pct": move_pct,
                 "stop_loss": input_payload.get("stop_loss"),
                 "take_profit": input_payload.get("take_profit"),
             }
             ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items() if v is not None)
-            explanation = f"{stage}: {reason} symbol={symbol} {ctx_str}"[:1000]
+            explanation = (
+                "Exit: reason={reason} entry_reason={entry_reason} age_s={age_s} move_pct={move_pct}; "
+                "stop={stop_loss} tp={take_profit}."
+            ).format(
+                reason=reason,
+                entry_reason=input_payload.get("entry_reason"),
+                age_s=age_s,
+                move_pct=move_pct,
+                stop_loss=input_payload.get("stop_loss"),
+                take_profit=input_payload.get("take_profit"),
+            )[:1000]
             self.ai_log_bus.emit(
                 stage=stage,
                 model="SDM:Straddle",
                 input_payload=input_payload,
-                output_payload=output_payload or {},
+                output_payload=output_payload,
                 explanation=explanation,
                 order_id=order_id,
                 meta={"reason": reason, "decision_factors": ctx},
