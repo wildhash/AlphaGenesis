@@ -1,3 +1,23 @@
+## Decision: SDM Engine vs alphagen_finals.py
+
+**Recommendation: Run SDM engine (current) as primary for finals.**
+
+Rationale:
+- SDM engine is battle-tested (won prelims with +57.25%)
+- Active straddle/runner mechanics proved effective
+- Position ledger, risk manager veto, and breakout straddle are already integrated
+- AI compliance logging just added and verified
+- alphagen_finals.py is a clean consolidation but hasn't been live-tested
+
+**alphagen_finals.py role:** Deploy to Singapore as backup/alternative. If SDM engine underperforms in first 3 days, we can switch.
+
+## Key Dates
+- Finals start: ~Feb 20, 2026 (TBC by WEEX)
+- Account reset: At finals start (back to 1,000 USDT)
+- IP whitelist request: Submit by Feb 15 latest
+- Singapore provisioning: Feb 8-10
+- Dry run on Singapore: Feb 10-15
+
 # Finals Cutover Plan
 
 ## T-24h (Preparation + Verification)
