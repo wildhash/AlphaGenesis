@@ -1082,6 +1082,8 @@ class SDMTradingEngine:
                 if blocked:
                     logger.info("DIAG_LOOP_SKIP symbol={} reason=straddle_blocked", symbol)
                     logger.info(f"⏸ STRADDLE ACTIVE - skipping normal strategy for {symbol}")
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
                     self._emit_ai_log(
                         stage="Decision Making",
                         model="AlphaGenesis-SDM-v1",
@@ -1090,12 +1092,19 @@ class SDMTradingEngine:
                             "regime": None,
                             "signal": None,
                             "confidence": 0.0,
+                            "straddle_active": True,
+                            "open_positions": open_positions,
+                            "capital": capital,
                         },
                         output_payload={
                             "action": "HOLD",
                             "reason": "STRADDLE_BLOCKED",
                         },
-                        explanation="No-trade: straddle state active; normal strategy skipped.",
+                        explanation=(
+                            "HOLD: regime=None, confidence=0.0, straddle_active=True, "
+                            f"open_positions={open_positions}, capital=${capital:.2f}, "
+                            "reason=STRADDLE_BLOCKED"
+                        ),
                     )
                     continue
 
@@ -1127,20 +1136,34 @@ class SDMTradingEngine:
                 )
 
                 if not proposed_action or proposed_action.get('direction') == 'HOLD':
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    regime_str = regime.value if hasattr(regime, "value") else str(regime)
                     self._emit_ai_log(
                         stage="Decision Making",
                         model="AlphaGenesis-SDM-v1",
                         input_payload={
                             "symbol": symbol,
-                            "regime": regime.value if hasattr(regime, "value") else str(regime),
+                            "regime": regime_str,
                             "signal": None,
                             "confidence": 0.0,
+                            "straddle_active": False,
+                            "open_positions": open_positions,
+                            "capital": capital,
                         },
                         output_payload={
                             "action": "HOLD",
                             "reason": "NO_SIGNAL",
                         },
-                        explanation="No-trade: no actionable signal or HOLD direction.",
+                        explanation=(
+                            "HOLD: regime={regime}, confidence=0.0, straddle_active=False, "
+                            "open_positions={open_positions}, capital=${capital:.2f}, "
+                            "reason=NO_SIGNAL"
+                        ).format(
+                            regime=regime_str,
+                            open_positions=open_positions,
+                            capital=capital,
+                        ),
                     )
                     continue
 
@@ -1156,20 +1179,36 @@ class SDMTradingEngine:
                         action=proposed_action,
                         intent_graph_blocked=True
                     )
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    regime_str = proposed_action.get("regime")
+                    conf = proposed_action.get("confidence", 0.0)
                     self._emit_ai_log(
                         stage="Decision Making",
                         model="AlphaGenesis-SDM-v1",
                         input_payload={
                             "symbol": symbol,
-                            "regime": proposed_action.get("regime"),
+                            "regime": regime_str,
                             "signal": proposed_action.get("reason"),
-                            "confidence": proposed_action.get("confidence"),
+                            "confidence": conf,
+                            "straddle_active": False,
+                            "open_positions": open_positions,
+                            "capital": capital,
                         },
                         output_payload={
                             "action": "HOLD",
                             "reason": "INTENT_GRAPH_REJECTED",
                         },
-                        explanation=f"No-trade: intent graph rejected action ({reasoning}).",
+                        explanation=(
+                            "HOLD: regime={regime}, confidence={conf}, straddle_active=False, "
+                            "open_positions={open_positions}, capital=${capital:.2f}, "
+                            "reason=INTENT_GRAPH_REJECTED"
+                        ).format(
+                            regime=regime_str,
+                            conf=conf,
+                            open_positions=open_positions,
+                            capital=capital,
+                        ),
                     )
                     continue
 

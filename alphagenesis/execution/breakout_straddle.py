@@ -6,6 +6,7 @@ and trails the winner with a software stop.
 """
 
 import time
+import os
 from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
@@ -70,6 +71,7 @@ class BreakoutStraddleManager:
         }
 
         self._states: Dict[str, Dict] = {}
+        self._clear_flag_path = "/tmp/clear_straddles.flag"
         self._reconcile_target_symbols = {
             "cmt_btcusdt",
             "cmt_ethusdt",
@@ -833,6 +835,13 @@ class BreakoutStraddleManager:
 
     def update(self, symbol: str, price: float):
         now = time.time()
+        if os.path.exists(self._clear_flag_path):
+            try:
+                os.remove(self._clear_flag_path)
+            except OSError:
+                pass
+            self._states = {}
+            logger.warning("⚠ STRADDLE_STATE_CLEARED reason=flag")
         state = self._get_state(symbol)
         self._reset_if_ready(state, now)
         self._maybe_adopt_from_ledger(symbol, price)

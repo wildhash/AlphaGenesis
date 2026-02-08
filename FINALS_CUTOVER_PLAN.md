@@ -12,11 +12,16 @@ Rationale:
 **alphagen_finals.py role:** Deploy to Singapore as backup/alternative. If SDM engine underperforms in first 3 days, we can switch.
 
 ## Key Dates
-- Finals start: ~Feb 20, 2026 (TBC by WEEX)
-- Account reset: At finals start (back to 1,000 USDT)
+- Finals start: Feb 9, 2026 20:00 UTC+8 (TOMORROW)
+- Account reset: At finals start (back to 10,000 USDT)
+- Strategy modification window: Feb 16-18
+- Finals end: Feb 23, 2026 20:00 UTC+8
 - IP whitelist request: Submit by Feb 15 latest
 - Singapore provisioning: Feb 8-10
 - Dry run on Singapore: Feb 10-15
+- AI logs must upload within 1 minute of order execution (OrderId exact match)
+- AI logs required every 8 hours minimum (no-trade/hold must be logged)
+- No manual intervention allowed during finals
 
 # Finals Cutover Plan
 
