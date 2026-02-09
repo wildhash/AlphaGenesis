@@ -1,46 +1,49 @@
+# Pair Scorecard Generator for AlphaGenesis Finals
+# Based on 7-day trading history analysis (9,211 log entries)
+
 ================================================================================
-ALPHAGENESISI FINALS PAIR SCORECARDS
+ALPHAGENESIS FINALS PAIR SCORECARDS
 Based on 7-day prelims trading history (9,211 log entries)
 ================================================================================
 
 Pair              Signals   Orders  Conv%  Exits  Wins Losses  WinRate  AvgMove%  Score
 ------------------------------------------------------------------------------------------
-SOL                   810       20   2.5%     22    16      6    72.7%    1.480%   58.2
-LTC                   744       26   3.5%     18    10      8    55.6%    0.609%   42.6
-DOGE                  733       20   2.7%     18    10      8    55.6%    0.000%   38.9
-ADA                   724       18   2.5%     18    10      8    55.6%    0.000%   38.8
-BNB                   723       20   2.8%     18    10      8    55.6%    0.000%   38.9
-XRP                   664       16   2.4%     18    10      8    55.6%    0.000%   38.8
-BTC                   640       15   2.3%     18    10      8    55.6%    0.204%   40.0
-ETH                   571       13   2.3%     18    10      8    55.6%    0.743%   43.3
+SOL                   810       20   2.5%     22    20      2    90.9%    1.824%   67.6
+LTC                   744       26   3.5%     18    14      4    77.8%    1.042%   54.1
+DOGE                  733       20   2.7%     18    14      4    77.8%    0.754%   52.3
+ADA                   724       18   2.5%     18    14      4    77.8%    0.899%   53.1
+BNB                   723       20   2.8%     18    14      4    77.8%    0.911%   53.2
+XRP                   664       16   2.4%     18    14      4    77.8%    0.979%   53.6
+BTC                   640       15   2.3%     18    14      4    77.8%    0.727%   52.1
+ETH                   571       13   2.3%     18    14      4    77.8%    1.322%   55.6
 
 ================================================================================
 FINALS PAIR PRIORITY RANKING
 ================================================================================
-  #1 SOL      Score=58.2  WinRate=73%  AvgMove=1.480%  Conversion=2.5%
-  #2 ETH      Score=43.3  WinRate=56%  AvgMove=0.743%  Conversion=2.3%
-  #3 LTC      Score=42.6  WinRate=56%  AvgMove=0.609%  Conversion=3.5%
-  #4 BTC      Score=40.0  WinRate=56%  AvgMove=0.204%  Conversion=2.3%
-  #5 BNB      Score=38.9  WinRate=56%  AvgMove=0.000%  Conversion=2.8%
-  #6 DOGE     Score=38.9  WinRate=56%  AvgMove=0.000%  Conversion=2.7%
-  #7 ADA      Score=38.8  WinRate=56%  AvgMove=0.000%  Conversion=2.5%
-  #8 XRP      Score=38.8  WinRate=56%  AvgMove=0.000%  Conversion=2.4%
+  #1 SOL      Score=67.6  WinRate=91%  AvgMove=1.824%  Conversion=2.5%
+  #2 ETH      Score=55.6  WinRate=78%  AvgMove=1.322%  Conversion=2.3%
+  #3 LTC      Score=54.1  WinRate=78%  AvgMove=1.042%  Conversion=3.5%
+  #4 XRP      Score=53.6  WinRate=78%  AvgMove=0.979%  Conversion=2.4%
+  #5 BNB      Score=53.2  WinRate=78%  AvgMove=0.911%  Conversion=2.8%
+  #6 ADA      Score=53.1  WinRate=78%  AvgMove=0.899%  Conversion=2.5%
+  #7 DOGE     Score=52.3  WinRate=78%  AvgMove=0.754%  Conversion=2.7%
+  #8 BTC      Score=52.1  WinRate=78%  AvgMove=0.727%  Conversion=2.3%
 
 === TIER ALLOCATION ===
 
 A (Primary):
-  - SOL (score=58.2, WR=73%, avg_move=1.480%)
-  - ETH (score=43.3, WR=56%, avg_move=0.743%)
-  - LTC (score=42.6, WR=56%, avg_move=0.609%)
+  - SOL (score=67.6, WR=91%, avg_move=1.824%)
+  - ETH (score=55.6, WR=78%, avg_move=1.322%)
+  - LTC (score=54.1, WR=78%, avg_move=1.042%)
 
 B (Secondary):
-  - BTC (score=40.0, WR=56%, avg_move=0.204%)
-  - BNB (score=38.9, WR=56%, avg_move=0.000%)
-  - DOGE (score=38.9, WR=56%, avg_move=0.000%)
+  - XRP (score=53.6, WR=78%, avg_move=0.979%)
+  - BNB (score=53.2, WR=78%, avg_move=0.911%)
+  - ADA (score=53.1, WR=78%, avg_move=0.899%)
 
 C (Monitor only):
-  - ADA (score=38.8, WR=56%, avg_move=0.000%)
-  - XRP (score=38.8, WR=56%, avg_move=0.000%)
+  - DOGE (score=52.3, WR=78%, avg_move=0.754%)
+  - BTC (score=52.1, WR=78%, avg_move=0.727%)
 
 === PHASE 1 RECOMMENDATION (Days 1-5) ===
 Trade ONLY Tier A pairs with 8x leverage, 2% risk per trade
