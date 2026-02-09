@@ -92,6 +92,8 @@ class Intent:
         Returns:
             Fitness score [0, 1] where 1 is perfect alignment
         """
+        if not isinstance(proposed_action, dict):
+            return 0.0
         # Calculate constraint satisfaction
         constraint_penalty = sum(
             c.evaluate(proposed_action.get(c.name, 0))
@@ -299,6 +301,8 @@ class IntentGraph:
         Returns:
             (should_execute, reasoning)
         """
+        if not isinstance(action, dict):
+            return False, "Invalid action payload (non-dict)"
         fitness_scores = self.evaluate_proposed_action(action)
 
         # Weighted average fitness by priority and activation
