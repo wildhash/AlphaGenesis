@@ -258,32 +258,23 @@ class SDMTradingEngine:
         self.stop_new_if_pnl_under = -0.06
         self.emergency_stop_at = -0.08
 
-        # Symbol prioritization
-        self.priority_symbols = ["cmt_btcusdt"]
-        self.secondary_symbols = ["cmt_ethusdt", "cmt_solusdt"]
-        self.max_active_symbols = 8
-        self.active_symbols = [
-            "cmt_btcusdt",
-            "cmt_ethusdt",
-            "cmt_solusdt",
-            "cmt_dogeusdt",
-            "cmt_xrpusdt",
-            "cmt_adausdt",
-            "cmt_bnbusdt",
-            "cmt_ltcusdt",
-        ]
+        # Symbol prioritization (tiered via env for finals)
+        tier_a = os.getenv("TIER_A_PAIRS", "cmt_solusdt,cmt_ethusdt,cmt_ltcusdt").split(",")
+        tier_b = os.getenv("TIER_B_PAIRS", "cmt_xrpusdt,cmt_bnbusdt,cmt_adausdt").split(",")
+        tier_c = os.getenv("TIER_C_PAIRS", "cmt_dogeusdt,cmt_btcusdt").split(",")
+        self.tier_a_pairs = [s.strip() for s in tier_a if s.strip()]
+        self.tier_b_pairs = [s.strip() for s in tier_b if s.strip()]
+        self.tier_c_pairs = [s.strip() for s in tier_c if s.strip()]
 
-        # Symbols to trade (all approved WEEX AI Wars pairs)
-        self.symbols = [
-            'cmt_btcusdt',
-            'cmt_ethusdt',
-            'cmt_solusdt',
-            'cmt_dogeusdt',
-            'cmt_xrpusdt',
-            'cmt_adausdt',
-            'cmt_bnbusdt',
-            'cmt_ltcusdt'
-        ]
+        self.tier_a_risk_pct = float(os.getenv("TIER_A_RISK_PCT", "0.025"))
+        self.tier_b_risk_pct = float(os.getenv("TIER_B_RISK_PCT", "0.015"))
+        self.tier_c_risk_pct = float(os.getenv("TIER_C_RISK_PCT", "0.01"))
+
+        self.priority_symbols = list(self.tier_a_pairs)
+        self.secondary_symbols = list(self.tier_b_pairs)
+        self.max_active_symbols = 8
+        self.symbols = self.tier_a_pairs + self.tier_b_pairs + self.tier_c_pairs
+        self.active_symbols = list(self.symbols)
 
         # Graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -1413,7 +1404,18 @@ class SDMTradingEngine:
             profile['stop_loss_pct'],
             profile['take_profit_pct']
         )
-        position_size_pct = profile['size_pct']
+        if symbol in self.tier_a_pairs:
+            tier_risk_pct = self.tier_a_risk_pct
+            tier_label = "A"
+        elif symbol in self.tier_b_pairs:
+            tier_risk_pct = self.tier_b_risk_pct
+            tier_label = "B"
+        else:
+            tier_risk_pct = self.tier_c_risk_pct
+            tier_label = "C"
+
+        position_size_pct = tier_risk_pct
+        logger.info("Tier {} sizing: size_pct={:.3f}", tier_label, position_size_pct)
         position_value = context['balance'] * position_size_pct
         size = position_value / price
 
