@@ -153,6 +153,7 @@ class SDMTradingEngine:
         logger.info("✓ Position Ledger initialized - conflict prevention active")
 
         # PHASE 2: Risk Manager - Final Veto Authority
+        tier_a_risk_pct = float(os.getenv("TIER_A_RISK_PCT", "0.025"))
         self.risk_manager = RiskManagerVeto(
             initial_balance=initial_capital,
             max_notional_per_symbol=2000.0,
@@ -161,7 +162,7 @@ class SDMTradingEngine:
             max_margin_ratio=0.80,
             max_daily_loss_pct=0.10,
             max_total_drawdown_pct=0.25,
-            max_per_trade_risk_pct=0.01,  # 1% per trade (conservative)
+            max_per_trade_risk_pct=tier_a_risk_pct,
             min_risk_reward_ratio=1.5,
             fee_churn_threshold=-0.01,
             fee_churn_lookback=10
