@@ -3,6 +3,7 @@ Momentum Hybrid Engine - Competition Edition
 Trend-following strategy with AI confirmation for WEEX AI Wars
 """
 import numpy as np
+import time
 from typing import Dict, Optional
 from loguru import logger
 from alphagenesis.sdm.semantic_binding import MarketRegime
@@ -114,9 +115,35 @@ class MomentumHybridEngine:
             # Calculate indicators
             ema_fast = self._calculate_ema(prices, self.ema_fast)
             ema_slow = self._calculate_ema(prices, self.ema_slow)
+            ema_long = self._calculate_ema(prices, 200)
+            ema_fast_prev = self._calculate_ema(prices[:-1], self.ema_fast) if len(prices) > (self.ema_fast + 1) else ema_fast
+            ema_fast_slope = ema_fast - ema_fast_prev
             rsi = self._calculate_rsi(prices)
-            atr = self._calculate_atr(highs_arr, lows_arr, prices)
-            atr_pct = (atr / current_price * 100.0) if (current_price and atr) else 0.0
+
+            tr_list = []
+            for i in range(1, len(prices)):
+                high_low = highs_arr[i] - lows_arr[i]
+                high_close = abs(highs_arr[i] - prices[i-1])
+                low_close = abs(lows_arr[i] - prices[i-1])
+                tr_list.append(max(high_low, high_close, low_close))
+
+            def _atr_from_tr(period: int) -> float:
+                if not tr_list:
+                    return abs(highs_arr[-1] - lows_arr[-1])
+                if len(tr_list) < period:
+                    return float(np.mean(tr_list))
+                return float(np.mean(tr_list[-period:]))
+
+            atr = _atr_from_tr(14)
+            atr_fast = _atr_from_tr(7)
+            atr_slow = _atr_from_tr(21)
+            atr_pct = (atr_fast / current_price * 100.0) if (current_price and atr_fast) else 0.0
+            atr_pct_slow = (atr_slow / current_price * 100.0) if (current_price and atr_slow) else 0.0
+
+            tr_recent = float(np.mean(tr_list[-3:])) if len(tr_list) >= 3 else 0.0
+            tr_prev = float(np.mean(tr_list[-13:-3])) if len(tr_list) >= 13 else 0.0
+            tr_expanding = tr_prev > 0 and tr_recent >= (tr_prev * 1.2)
+            atr_rising = atr_pct > 0 and atr_pct >= max(atr_pct_slow * 1.15, 0.25)
 
             # Trend detection
             trend_up = ema_fast > ema_slow
@@ -134,6 +161,106 @@ class MomentumHybridEngine:
             if regime == MarketRegime.LOW_VOLATILITY:
                 logger.info("LOW_VOL gate reached")
                 allow = False
+                if symbol in ("cmt_ethusdt", "cmt_solusdt"):
+                    logger.info(
+                        "SOFT_GATE_BLOCKED symbol={} reason=override_loss_leader",
+                        symbol
+                    )
+                    return "no_signal"
+                extreme_thresholds = {
+                    'cmt_btcusdt': 1.2,
+                    'cmt_ethusdt': 1.2,
+                    'cmt_bnbusdt': 1.2,
+                    'cmt_solusdt': 1.8,
+                    'cmt_xrpusdt': 1.8,
+                }
+                extreme_threshold = extreme_thresholds.get(symbol)
+                if extreme_threshold:
+                    if abs(momentum_pct) >= extreme_threshold and atr_rising and tr_expanding:
+                        allow_long = trend_up or (
+                            current_price > ema_slow and current_price > ema_fast and rsi > 55
+                        )
+                        allow_short = trend_down or (
+                            current_price < ema_slow and current_price < ema_fast and rsi < 45
+                        )
+
+                        entry_features = {
+                            'momentum_pct': momentum_pct,
+                            'atr_pct': atr_pct,
+                            'rsi': rsi,
+                            'price': current_price,
+                            'ema20': ema_fast,
+                            'ema50': ema_slow,
+                            'ema200': ema_long,
+                            'ema20_slope': ema_fast_slope,
+                            'price_gt_ema50': current_price > ema_slow,
+                        }
+
+                        if momentum_pct > 0 and allow_long and rsi < 75:
+                            logger.info(
+                                "DIAG_EXTREME_OVERRIDE symbol={} momentum_pct={:.3f} atr_pct={:.3f} rsi={:.1f} trend_up={} trend_down={} decision=ALLOW_LONG",
+                                symbol,
+                                momentum_pct,
+                                atr_pct,
+                                rsi,
+                                trend_up,
+                                trend_down
+                            )
+                            stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
+                            take_profit_pct = stop_loss_pct * 2.5
+                            reversal_aligned = (not trend_up) and allow_long
+                            return {
+                                'direction': 'LONG',
+                                'confidence': 0.72,
+                                'stop_loss_pct': stop_loss_pct,
+                                'take_profit_pct': take_profit_pct,
+                                'reason': 'LOW_VOL_EXTREME_OVERRIDE',
+                                'features': entry_features,
+                                'entry_meta': {
+                                    'entry_reason': 'LOW_VOL_EXTREME_OVERRIDE',
+                                    'symbol': symbol,
+                                    'ts': time.time(),
+                                    'side': 'LONG',
+                                    'features': entry_features,
+                                    'gates': {
+                                        'low_vol_bypassed': True,
+                                        'reversal_aligned': reversal_aligned,
+                                    },
+                                },
+                            }
+                        if momentum_pct < 0 and allow_short and rsi > 25:
+                            logger.info(
+                                "DIAG_EXTREME_OVERRIDE symbol={} momentum_pct={:.3f} atr_pct={:.3f} rsi={:.1f} trend_up={} trend_down={} decision=ALLOW_SHORT",
+                                symbol,
+                                momentum_pct,
+                                atr_pct,
+                                rsi,
+                                trend_up,
+                                trend_down
+                            )
+                            stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
+                            take_profit_pct = stop_loss_pct * 2.5
+                            reversal_aligned = (not trend_down) and allow_short
+                            return {
+                                'direction': 'SHORT',
+                                'confidence': 0.72,
+                                'stop_loss_pct': stop_loss_pct,
+                                'take_profit_pct': take_profit_pct,
+                                'reason': 'LOW_VOL_EXTREME_OVERRIDE',
+                                'features': entry_features,
+                                'entry_meta': {
+                                    'entry_reason': 'LOW_VOL_EXTREME_OVERRIDE',
+                                    'symbol': symbol,
+                                    'ts': time.time(),
+                                    'side': 'SHORT',
+                                    'features': entry_features,
+                                    'gates': {
+                                        'low_vol_bypassed': True,
+                                        'reversal_aligned': reversal_aligned,
+                                    },
+                                },
+                            }
+
                 # LOW_VOL_SHORT_GATE_X3_WITH_ATR: conservative short unlock w/ range expansion confirmation
                 if momentum_pct <= -3.0 and rsi <= 45 and atr_pct >= 0.25:
                     return {
@@ -147,10 +274,16 @@ class MomentumHybridEngine:
                     logger.info(
                         f"LOW_VOL_SHORT_GATE_X3_WITH_ATR blocked symbol={symbol} momentum_pct={momentum_pct:.2f} rsi={rsi:.1f} atr_pct={atr_pct:.3f}"
                     )
-                if momentum_pct < -2.0 and rsi < 48 and trend_down:
+                long_threshold = 2.0
+                short_threshold = -1.5
+                if momentum_pct > long_threshold:
                     allow = True
-                if momentum_pct > 2.0 and rsi > 52 and trend_up:
+                elif momentum_pct < short_threshold:
                     allow = True
+                if allow:
+                    logger.info(
+                        f"SOFT_GATE_LOW_VOL_PASS symbol={symbol} momentum_pct={momentum_pct:.3f} thresholds=[{short_threshold:.3f},{long_threshold:.3f}]"
+                    )
                 if not allow:
                     logger.info(f"LOW_VOL gate blocked: momentum_pct={momentum_pct:.3f} rsi={rsi:.1f} trend_up={trend_up} trend_down={trend_down}")
 

@@ -36,6 +36,7 @@ class Position:
     position_id: str  # UUID for idempotency
     client_order_id: Optional[str] = None
     order_id: Optional[str] = None
+    entry_reason: Optional[str] = None
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
     last_update_ts: float = 0.0
@@ -244,7 +245,8 @@ class PositionLedger:
         size: float,
         entry_price: float,
         client_order_id: Optional[str] = None,
-        order_id: Optional[str] = None
+        order_id: Optional[str] = None,
+        entry_reason: Optional[str] = None
     ) -> bool:
         """
         Open new position (idempotent if same client_order_id).
@@ -274,6 +276,7 @@ class PositionLedger:
             position_id=position_id,
             client_order_id=client_order_id,
             order_id=order_id,
+            entry_reason=entry_reason,
             last_update_ts=time.time(),
             last_exchange_sync_ts=time.time()
         )
@@ -286,7 +289,9 @@ class PositionLedger:
         self.desync_events.pop(symbol, None)
 
         self._save()
-        logger.info(f"✅ Opened {side} position on {symbol}: size={size}, price={entry_price}, id={position_id[:8]}")
+        logger.info(
+            f"✅ Opened {side} position on {symbol}: size={size}, price={entry_price}, id={position_id[:8]}, entry_reason={entry_reason}"
+        )
         return True
 
     def close_position(

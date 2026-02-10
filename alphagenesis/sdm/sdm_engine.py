@@ -18,9 +18,32 @@ import os
 import time
 import signal
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 import numpy as np
 from loguru import logger
+
+
+class AILogBusWithExitSummary:
+    def __init__(self, base_bus, record_cb: Callable[[str, Optional[float]], None]):
+        self._base_bus = base_bus
+        self._record_cb = record_cb
+
+    def emit(self, stage: str, model: str, input_payload: Dict[str, Any], output_payload: Dict[str, Any], explanation: str, order_id: Optional[str] = None, meta: Optional[Dict[str, Any]] = None):
+        reason = None
+        age_s = None
+        if isinstance(input_payload, dict):
+            reason = input_payload.get('exit_reason') or reason
+            age_s = input_payload.get('age_seconds') or input_payload.get('age_s') or age_s
+        if reason is None and isinstance(output_payload, dict):
+            reason = output_payload.get('exit_reason')
+        if reason:
+            try:
+                age_val = float(age_s) if age_s is not None else None
+            except (TypeError, ValueError):
+                age_val = None
+            self._record_cb(reason, age_val)
+        return self._base_bus.emit(stage, model, input_payload, output_payload, explanation, order_id=order_id, meta=meta)
+
 
 # SDM Components
 from .intent_graph import IntentGraph, Intent, IntentType
@@ -101,6 +124,7 @@ class SDMTradingEngine:
                 store = AILogStore(db_path)
                 uploader = AILogUploader(self.weex)
                 self.ai_log_bus = AILogBus(store)
+                self.ai_log_bus = AILogBusWithExitSummary(self.ai_log_bus, self._record_exit_summary)
                 self.ai_log_worker = AILogWorker(store, uploader)
                 self.ai_log_worker.start()
             except Exception as e:
@@ -231,6 +255,22 @@ class SDMTradingEngine:
         self.is_running = False
         self.positions: Dict[str, Any] = {}
         self.iteration = 0
+        self._diag_gate_counts = {
+            "normalized_no_signal": 0,
+            "low_vol_block": 0,
+            "has_signal_false": 0,
+        }
+        self._diag_block_counts = {
+            "override_signals": 0,
+            "opened_straddles": 0,
+            "blocked_straddle_active": 0,
+            "blocked_intent_veto": 0,
+        }
+        self._exit_summary = {
+            "counts": {},
+            "holds": [],
+        }
+        self._diag_gate_log_every = 10
         self.total_pnl = 0.0
         self.daily_trades = 0
         self.last_trade_time = None
@@ -374,6 +414,48 @@ class SDMTradingEngine:
             try:
                 self.iteration += 1
                 timestamp = datetime.now()
+
+                if self._diag_gate_log_every and self.iteration % self._diag_gate_log_every == 0:
+                    counts = self._diag_gate_counts
+                    logger.info(
+                        "DIAG_GATE_COUNTS normalized_no_signal={} low_vol_block={} has_signal_false={}",
+                        counts["normalized_no_signal"],
+                        counts["low_vol_block"],
+                        counts["has_signal_false"]
+                    )
+                    self._diag_gate_counts = {
+                        "normalized_no_signal": 0,
+                        "low_vol_block": 0,
+                        "has_signal_false": 0,
+                    }
+
+                    block_counts = self._diag_block_counts
+                    logger.info(
+                        "DIAG_BLOCK_SUMMARY override_signals={} opened_straddles={} blocked_straddle_active={} blocked_intent_veto={}",
+                        block_counts["override_signals"],
+                        block_counts["opened_straddles"],
+                        block_counts["blocked_straddle_active"],
+                        block_counts["blocked_intent_veto"]
+                    )
+                    self._diag_block_counts = {
+                        "override_signals": 0,
+                        "opened_straddles": 0,
+                        "blocked_straddle_active": 0,
+                        "blocked_intent_veto": 0,
+                    }
+
+                    summary = self._consume_exit_summary()
+                    if summary and summary.get("total", 0) > 0:
+                        logger.info(
+                            "DIAG_EXIT_SUMMARY total={} time_stop={} stop_loss={} take_profit={} runner={} breakout={} avg_hold_s={}",
+                            summary.get("total", 0),
+                            summary.get("time_stop", 0),
+                            summary.get("stop_loss", 0),
+                            summary.get("take_profit", 0),
+                            summary.get("runner", 0),
+                            summary.get("breakout", 0),
+                            summary.get("avg_hold_s")
+                        )
 
                 logger.info(f"\n{'='*70}")
                 logger.info(f"SDM ITERATION {self.iteration} - {timestamp}")
@@ -838,6 +920,74 @@ class SDMTradingEngine:
             'open_position_count': float(len(self.position_ledger.get_all_positions())),
         })
 
+    def _record_exit_summary(self, reason: str, age_s: Optional[float]) -> None:
+        try:
+            counts = self._exit_summary["counts"]
+            counts[reason] = counts.get(reason, 0) + 1
+            if age_s is not None:
+                self._exit_summary["holds"].append(int(age_s))
+        except Exception:
+            pass
+
+    def _consume_exit_summary(self) -> Dict[str, Any]:
+        counts = self._exit_summary.get("counts", {})
+        holds = self._exit_summary.get("holds", [])
+        total = sum(counts.values())
+        avg_hold_s = None
+        if holds:
+            avg_hold_s = int(sum(holds) / len(holds))
+        summary = {
+            "total": total,
+            "time_stop": sum(v for k, v in counts.items() if "TIME_STOP" in k),
+            "stop_loss": sum(v for k, v in counts.items() if "STOP_LOSS" in k),
+            "take_profit": sum(v for k, v in counts.items() if "TAKE_PROFIT" in k),
+            "runner": sum(v for k, v in counts.items() if "RUNNER" in k),
+            "breakout": sum(v for k, v in counts.items() if "BREAKOUT" in k),
+            "avg_hold_s": avg_hold_s,
+        }
+        self._exit_summary = {
+            "counts": {},
+            "holds": [],
+        }
+        return summary
+
+    def _track_gate_counts(self, signal: Any, regime: MarketRegime):
+        if not hasattr(self, "_diag_gate_counts"):
+            return
+        if not signal:
+            self._diag_gate_counts["has_signal_false"] += 1
+            return
+        if isinstance(signal, str):
+            self._diag_gate_counts["normalized_no_signal"] += 1
+            if regime == MarketRegime.LOW_VOLATILITY:
+                self._diag_gate_counts["low_vol_block"] += 1
+
+    def _sanitize_meta(self, payload: Any) -> Any:
+        try:
+            import numpy as np
+        except Exception:
+            np = None
+        if payload is None:
+            return None
+        if isinstance(payload, (str, int, float, bool)):
+            return payload
+        if np is not None:
+            if isinstance(payload, np.generic):
+                try:
+                    return payload.item()
+                except Exception:
+                    return str(payload)
+            if isinstance(payload, np.ndarray):
+                return [self._sanitize_meta(x) for x in payload.tolist()]
+        if isinstance(payload, dict):
+            return {str(k): self._sanitize_meta(v) for k, v in payload.items()}
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_meta(v) for v in payload]
+        try:
+            return str(payload)
+        except Exception:
+            return repr(payload)
+
     def _emit_ai_log(self, stage: str, model: str, input_payload: Dict[str, Any], output_payload: Dict[str, Any], explanation: str, order_id: Optional[str] = None):
         if not self.ai_log_bus:
             return
@@ -1104,10 +1254,19 @@ class SDMTradingEngine:
                 regime = self._detect_regime_for_symbol(symbol)
 
                 # Bind intent to model via semantic binding
+                account_state = market_state.get('account')
+                if not isinstance(account_state, dict):
+                    logger.error(
+                        "BAD_ACCOUNT_STATE symbol={} type={} value={}",
+                        symbol,
+                        type(account_state).__name__,
+                        account_state
+                    )
+                    account_state = {'balance': self.current_capital}
                 context = {
                     'regime': regime,
                     'symbol': symbol,
-                    'balance': market_state['account'].get('balance', self.current_capital)
+                    'balance': account_state.get('balance', self.current_capital)
                 }
 
                 best_model = self.binding_layer.get_best_model_for_context(intent_id, context)
@@ -1126,6 +1285,28 @@ class SDMTradingEngine:
                     intent=intent,
                     context=context
                 )
+
+                logger.info(
+                    "PROPOSED_ACTION_RAW symbol={} type={} value={}",
+                    symbol,
+                    type(proposed_action).__name__,
+                    proposed_action
+                )
+                if not isinstance(proposed_action, dict):
+                    logger.error(
+                        "BAD_PROPOSED_ACTION_TYPE symbol={} type={} value={}",
+                        symbol,
+                        type(proposed_action).__name__,
+                        proposed_action
+                    )
+                    if isinstance(proposed_action, str):
+                        proposed_action = {
+                            "direction": "HOLD",
+                            "confidence": 0.0,
+                            "reason": proposed_action,
+                        }
+                    else:
+                        continue
 
                 if not proposed_action or proposed_action.get('direction') == 'HOLD':
                     open_positions = len(self.position_ledger.get_all_positions())
@@ -1166,6 +1347,7 @@ class SDMTradingEngine:
 
                 if not should_execute:
                     logger.info(f"Intent graph rejected: {reasoning}")
+                    self._diag_block_counts["blocked_intent_veto"] += 1
                     self._log_straddle_signal_debug(
                         symbol=symbol,
                         action=proposed_action,
@@ -1226,7 +1408,7 @@ class SDMTradingEngine:
                 )
 
             except Exception as e:
-                logger.error(f"Error resolving intent for {symbol}: {e}", exc_info=True)
+                logger.exception(f"Error resolving intent for {symbol}: {e}")
 
     def _detect_regime_for_symbol(self, symbol: str) -> MarketRegime:
         """Detect market regime for a symbol."""
@@ -1375,16 +1557,29 @@ class SDMTradingEngine:
             logger.info("DIAG_MOMENTUM_ENGINE_CLASS symbol={} strategy_class={} strategy_module={} engine_class={} engine_module={}", symbol, self.momentum_strategy.__class__.__name__, self.momentum_strategy.__class__.__module__, getattr(self.momentum_strategy, 'momentum_engine', self.momentum_strategy).__class__.__name__, getattr(self.momentum_strategy, 'momentum_engine', self.momentum_strategy).__class__.__module__)
             logger.info("DIAG_CALL_MOMENTUM symbol={} regime={}", symbol, regime)
             signal = self.momentum_strategy.generate_signal(candles, price, symbol, regime=regime)
-            logger.info("DIAG_MOMENTUM_RESULT symbol={} has_signal={}", symbol, bool(signal))
+            has_signal = bool(signal)
+            logger.info("DIAG_MOMENTUM_RESULT symbol={} has_signal={}", symbol, has_signal)
+            self._track_gate_counts(signal, regime)
         else:
             # Fallback to momentum if strategy not implemented yet
             signal = self.momentum_strategy.generate_signal(candles, price, symbol, regime=regime)
-            logger.info("DIAG_MOMENTUM_RESULT symbol={} has_signal={}", symbol, bool(signal))
+            has_signal = bool(signal)
+            logger.info("DIAG_MOMENTUM_RESULT symbol={} has_signal={}", symbol, has_signal)
+            self._track_gate_counts(signal, regime)
             chosen_strategy = 'momentum'
 
         if not signal:
             logger.info("DIAG_EARLY symbol={} stage=no_signal", symbol)
             return {'direction': 'HOLD', 'confidence': 0.0}
+
+        if not isinstance(signal, dict):
+            logger.info(
+                "DIAG_EARLY symbol={} stage=signal_not_dict type={} value={}",
+                symbol,
+                type(signal).__name__,
+                signal
+            )
+            return {'direction': 'HOLD', 'confidence': 0.0, 'reason': str(signal)}
 
         # Position sizing + stops based on regime profile
         profile = self._regime_profile(regime)
@@ -1459,6 +1654,7 @@ class SDMTradingEngine:
             else:
                 take_profit = price * (1 - take_profit_pct)
 
+        entry_meta = signal.get('entry_meta')
         action = {
             'symbol': symbol,
             'direction': signal['direction'],
@@ -1473,7 +1669,8 @@ class SDMTradingEngine:
             'stop_loss': stop_loss,
             'take_profit': take_profit,
             # Features for journal
-            'features': features
+            'features': features,
+            'entry_meta': entry_meta,
         }
 
         current_positions = len(self.position_ledger.get_all_positions())
@@ -1494,6 +1691,7 @@ class SDMTradingEngine:
                 "funding_rate": funding_rate,
                 "current_positions": current_positions,
                 "risk_headroom": risk_headroom,
+                "entry_meta": entry_meta,
             },
             output_payload={
                 "direction": action.get("direction"),
@@ -1523,6 +1721,14 @@ class SDMTradingEngine:
             regime_str,
             action
         )
+
+        if entry_meta:
+            safe_meta = self._sanitize_meta(entry_meta)
+            try:
+                meta_json = json.dumps(safe_meta, separators=(",", ":"), ensure_ascii=True)
+            except Exception:
+                meta_json = str(safe_meta)
+            logger.info("DIAG_ENTRY_META symbol={} entry_reason={} payload={}", symbol, safe_meta.get("entry_reason") if isinstance(safe_meta, dict) else None, meta_json)
 
         return action
 
@@ -1558,6 +1764,9 @@ class SDMTradingEngine:
             if action['direction'] == 'HOLD':
                 return
 
+            if action.get('reason') == 'LOW_VOL_EXTREME_OVERRIDE':
+                self._diag_block_counts["override_signals"] += 1
+
             if self.diagnostic_suspend_active:
                 self._log_diagnostic_status()
                 logger.warning("🟠 DIAGNOSTIC_SUSPEND - blocking order execution for {}", symbol)
@@ -1571,6 +1780,7 @@ class SDMTradingEngine:
 
             if self.straddle_manager.is_blocked(symbol):
                 logger.info(f"⏸ STRADDLE ACTIVE - skipping execution for {symbol}")
+                self._diag_block_counts["blocked_straddle_active"] += 1
                 return
 
             if action.get('reason') == 'LOW_VOL_SHORT_GATE_X3_WITH_ATR':
@@ -1581,9 +1791,11 @@ class SDMTradingEngine:
                         symbol=symbol,
                         price=action.get('entry_price', 0.0),
                         legacy_amount=self.legacy_amount,
-                        reason=action.get('reason')
+                        reason=action.get('reason'),
+                        entry_meta=action.get('entry_meta'),
                     )
                     if opened:
+                        self._diag_block_counts["opened_straddles"] += 1
                         return
                     logger.warning(f"⚠ STRADDLE NOT OPENED - skipping normal execution for {symbol}")
                     return
@@ -2013,6 +2225,14 @@ class SDMTradingEngine:
 
             # === STEP 6: Update Ledger + Legacy Systems ===
             if success:
+                entry_reason = None
+                if isinstance(action, dict):
+                    entry_meta = action.get("entry_meta")
+                    if isinstance(entry_meta, dict):
+                        entry_reason = entry_meta.get("entry_reason")
+                    if not entry_reason:
+                        entry_reason = action.get("reason")
+
                 # Record in position ledger
                 position_recorded = self.position_ledger.open_position(
                     symbol=symbol,
@@ -2020,7 +2240,8 @@ class SDMTradingEngine:
                     size=action['position_size'],
                     entry_price=action['entry_price'],
                     client_order_id=client_order_id,
-                    order_id=order_id
+                    order_id=order_id,
+                    entry_reason=entry_reason
                 )
 
                 if not position_recorded:

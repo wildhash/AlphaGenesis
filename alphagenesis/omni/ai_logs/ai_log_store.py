@@ -57,6 +57,9 @@ class AILogStore:
             "output": output_payload,
             "explanation": explanation,
         }
+        entry_meta = input_payload.get("entry_meta") if isinstance(input_payload, dict) else None
+        if entry_meta is not None:
+            payload["entry_meta"] = entry_meta
         if order_id is not None:
             payload["orderId"] = str(order_id)
         if meta:

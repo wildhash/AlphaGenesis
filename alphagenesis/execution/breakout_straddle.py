@@ -224,6 +224,75 @@ class BreakoutStraddleManager:
             return {"dry_run": True, "client_oid": f"dry_run_{symbol}_{int(time.time())}"}
         return self.weex.place_order(symbol=symbol, side=side, size=size, is_market=True)
 
+    def _extract_order_refs(self, result: Dict) -> Dict[str, str]:
+        if not isinstance(result, dict):
+            return {}
+        ref = {}
+        if result.get("order_id"):
+            ref["order_id"] = str(result.get("order_id"))
+        if result.get("client_oid"):
+            ref["client_oid"] = str(result.get("client_oid"))
+        data = result.get("data")
+        if isinstance(data, dict):
+            if data.get("orderId"):
+                ref["order_id"] = str(data.get("orderId"))
+            if data.get("order_id"):
+                ref["order_id"] = str(data.get("order_id"))
+        return ref
+
+    def _log_exit_attribution(self, symbol: str, reason: str, state: Dict, exit_ref: Dict):
+        entry_meta = state.get("entry_meta") or {}
+        payload = {
+            "entry_reason": state.get("entry_reason"),
+            "entry_order_ids": state.get("entry_order_ids") or [],
+            "exit_order_ids": state.get("exit_order_ids") or ([] if not exit_ref else [exit_ref]),
+            "entry_meta": entry_meta,
+            "entry_price": state.get("entry_price"),
+            "last_price": state.get("last_price"),
+            "realized_pnl": state.get("realized_pnl"),
+        }
+        payload = self._sanitize_payload(payload)
+        try:
+            import json
+            payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+        except Exception:
+            payload_json = str(payload)
+        logger.info(
+            "AI_EXIT_LOG symbol={} exit_reason={} entry_reason={} entry_order_ids={} exit_order_ids={} payload={}",
+            symbol,
+            reason,
+            state.get("entry_reason"),
+            payload.get("entry_order_ids"),
+            payload.get("exit_order_ids"),
+            payload_json,
+        )
+
+    def _sanitize_payload(self, payload: Any) -> Any:
+        try:
+            import numpy as np
+        except Exception:
+            np = None
+        if payload is None:
+            return None
+        if isinstance(payload, (str, int, float, bool)):
+            return payload
+        if np is not None:
+            if isinstance(payload, np.generic):
+                try:
+                    return payload.item()
+                except Exception:
+                    return str(payload)
+            if isinstance(payload, np.ndarray):
+                return [self._sanitize_payload(x) for x in payload.tolist()]
+        if isinstance(payload, dict):
+            return {str(k): self._sanitize_payload(v) for k, v in payload.items()}
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_payload(v) for v in payload]
+        try:
+            return str(payload)
+        except Exception:
+            return repr(payload)
+
     def _enter_cooldown(self, state: Dict, reason: str):
         state["state"] = self.STATE_COOLDOWN
         state["cooldown_until"] = time.time() + self.cooldown_seconds
@@ -325,6 +394,9 @@ class BreakoutStraddleManager:
                 "state": state.get("state"),
                 "entry_price": state.get("entry_price"),
                 "last_price": state.get("last_price"),
+                "entry_reason": state.get("entry_reason"),
+                "entry_meta": state.get("entry_meta"),
+                "entry_order_ids": state.get("entry_order_ids"),
             },
             output_payload={"side": 3, "size": size, "dry_run": self.dry_run},
         )
@@ -332,6 +404,10 @@ class BreakoutStraddleManager:
         if self._is_40015(result):
             self._enter_cooldown(state, "40015")
             return False
+        exit_ref = self._extract_order_refs(result)
+        if exit_ref:
+            state.setdefault("exit_order_ids", []).append(exit_ref)
+        self._log_exit_attribution(symbol, reason, state, exit_ref)
         return self._order_success(result)
 
     def _close_short(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
@@ -346,6 +422,9 @@ class BreakoutStraddleManager:
                 "state": state.get("state"),
                 "entry_price": state.get("entry_price"),
                 "last_price": state.get("last_price"),
+                "entry_reason": state.get("entry_reason"),
+                "entry_meta": state.get("entry_meta"),
+                "entry_order_ids": state.get("entry_order_ids"),
             },
             output_payload={"side": 4, "size": size, "dry_run": self.dry_run},
         )
@@ -353,6 +432,10 @@ class BreakoutStraddleManager:
         if self._is_40015(result):
             self._enter_cooldown(state, "40015")
             return False
+        exit_ref = self._extract_order_refs(result)
+        if exit_ref:
+            state.setdefault("exit_order_ids", []).append(exit_ref)
+        self._log_exit_attribution(symbol, reason, state, exit_ref)
         return self._order_success(result)
 
     def is_blocked(self, symbol: str) -> bool:
@@ -668,7 +751,7 @@ class BreakoutStraddleManager:
         notional = legacy_amount * size_pct
         return notional / price, atr_ratio, breakout, initial_stop, trail_activation, max_hold, trail_pct
 
-    def try_open(self, symbol: str, price: float, legacy_amount: float, reason: Optional[str] = None) -> bool:
+    def try_open(self, symbol: str, price: float, legacy_amount: float, reason: Optional[str] = None, entry_meta: Optional[Dict[str, Any]] = None) -> bool:
         now = time.time()
         state = self._get_state(symbol)
         self._reset_if_ready(state, now)
@@ -762,8 +845,9 @@ class BreakoutStraddleManager:
                 st["last_update_ts"] = now_ts
                 st["reconcile_checked"] = True
                 st["adopted_from_ledger"] = True
+                ledger_entry_reason = getattr(ledger_pos, "entry_reason", None)
                 if not st.get("entry_reason"):
-                    st["entry_reason"] = "ADOPTED"
+                    st["entry_reason"] = ledger_entry_reason or "ADOPTED"
                 st["adopted_ts"] = now_ts
 
                 logger.warning(
@@ -792,6 +876,14 @@ class BreakoutStraddleManager:
         long_ok = self._order_success(long_result)
         short_ok = self._order_success(short_result)
 
+        entry_order_ids = []
+        long_ref = self._extract_order_refs(long_result)
+        short_ref = self._extract_order_refs(short_result)
+        if long_ref:
+            entry_order_ids.append(long_ref)
+        if short_ref:
+            entry_order_ids.append(short_ref)
+
         if self._is_40015(long_result) or self._is_40015(short_result):
             if long_ok:
                 self._close_long(symbol, size, state, reason="OPEN_CLEANUP_40015")
@@ -812,6 +904,10 @@ class BreakoutStraddleManager:
         state["entry_price"] = price
         state["entry_time"] = now
         state.setdefault("entry_reason", reason or "UNKNOWN")
+        if entry_meta:
+            state["entry_meta"] = entry_meta
+        if entry_order_ids:
+            state["entry_order_ids"] = entry_order_ids
         state["size"] = size
         state["breakout_pct"] = breakout
         state["initial_stop_loss_pct"] = initial_stop
@@ -831,6 +927,14 @@ class BreakoutStraddleManager:
             f"trail_activation={trail_activation*100:.2f}% trail_distance={trail_pct*100:.2f}% "
             f"max_hold={max_hold}s gamma_mode={self.gamma_mode}"
         )
+        if entry_meta:
+            safe_meta = self._sanitize_payload(entry_meta)
+            try:
+                import json
+                meta_json = json.dumps(safe_meta, separators=(",", ":"), ensure_ascii=True)
+            except Exception:
+                meta_json = str(safe_meta)
+            logger.info("DIAG_ENTRY_META symbol={} entry_reason={} payload={}", symbol, state.get("entry_reason"), meta_json)
         return True
 
     def update(self, symbol: str, price: float):
