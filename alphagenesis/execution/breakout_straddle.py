@@ -61,6 +61,7 @@ class BreakoutStraddleManager:
         self.estimated_taker_fee_rate = max(0.0, float(os.getenv("ESTIMATED_TAKER_FEE_RATE", "0.0006")))
         self.stale_adopted_runner_max_age_seconds = max(1800, int(os.getenv("STALE_ADOPTED_RUNNER_MAX_AGE_SECONDS", "21600")))
         self.stale_runner_cleanup_interval_seconds = max(60, int(os.getenv("STALE_RUNNER_CLEANUP_INTERVAL_SECONDS", "300")))
+        self.close_reconcile_pause_seconds = max(0.0, min(2.0, float(os.getenv("CLOSE_RECONCILE_PAUSE_SECONDS", "0.2"))))
         self._exit_ai_log_wired_emitted = False
         self.position_size_multiplier = 1.0
         self.last_daily_pnl = 0.0
@@ -367,6 +368,286 @@ class BreakoutStraddleManager:
                 ref["order_id"] = str(data.get("order_id"))
         return ref
 
+    def _extract_orders_payload(self, response: Any) -> List[Dict]:
+        if not isinstance(response, dict):
+            if isinstance(response, list):
+                return [row for row in response if isinstance(row, dict)]
+            return []
+        data = response.get("data")
+        if data is None:
+            data = response
+        if isinstance(data, dict):
+            for key in ("orders", "list", "rows", "data"):
+                block = data.get(key)
+                if isinstance(block, list):
+                    return [row for row in block if isinstance(row, dict)]
+            if {"order_id", "orderId", "id"} & set(data.keys()):
+                return [data]
+            return []
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        return []
+
+    def _extract_order_id(self, order: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(order, dict):
+            return None
+        for key in ("order_id", "orderId", "id", "oid", "client_oid", "clientOid"):
+            value = order.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    def _cancel_open_orders_for_symbol(self, symbol: str) -> Dict[str, int]:
+        cancelled = 0
+        failed = 0
+        attempted = 0
+        total_open = 0
+
+        if self.dry_run:
+            return {"open_orders": 0, "attempted": 0, "cancelled": 0, "failed": 0}
+
+        try:
+            response = self.weex.get_open_orders(symbol=symbol)
+        except Exception as exc:
+            logger.warning("CLOSE_40015_OPEN_ORDERS_FETCH_FAIL symbol={} err={}", symbol, exc)
+            return {"open_orders": 0, "attempted": 0, "cancelled": 0, "failed": 1}
+
+        open_orders = self._extract_orders_payload(response)
+        total_open = len(open_orders)
+        for order in open_orders:
+            order_id = self._extract_order_id(order)
+            if not order_id:
+                failed += 1
+                continue
+            attempted += 1
+            try:
+                cancel_result = self.weex.cancel_order(symbol=symbol, order_id=order_id)
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "CLOSE_40015_CANCEL_CONFLICTING symbol={} order_id={} ok=False err={}",
+                    symbol,
+                    order_id,
+                    exc,
+                )
+                continue
+            if isinstance(cancel_result, dict):
+                code = str(cancel_result.get("code", ""))
+                msg = str(cancel_result.get("msg", "")).lower()
+                if code and code not in ("0", "200", "success"):
+                    if "not exist" in msg or "already" in msg:
+                        cancelled += 1
+                    else:
+                        failed += 1
+                else:
+                    cancelled += 1
+            else:
+                cancelled += 1
+
+        return {
+            "open_orders": total_open,
+            "attempted": attempted,
+            "cancelled": cancelled,
+            "failed": failed,
+        }
+
+    def _get_exchange_position_snapshot(self, symbol: str) -> Dict[str, Any]:
+        response = self.weex.get_position(symbol)
+        positions = self._extract_positions_payload(response)
+        long_size = 0.0
+        short_size = 0.0
+        for pos in positions:
+            pos_symbol = pos.get("symbol") if isinstance(pos, dict) else None
+            if pos_symbol and pos_symbol != symbol:
+                continue
+            size = self._extract_position_size(pos)
+            if size == 0:
+                continue
+            side = self._extract_position_side(pos)
+            if not side and size < 0:
+                side = "SHORT"
+            if side == "LONG":
+                long_size += abs(size)
+            elif side == "SHORT":
+                short_size += abs(size)
+
+        has_position = (long_size > 0.0) or (short_size > 0.0)
+        if long_size > 0.0 and short_size == 0.0:
+            position_side = "LONG"
+            close_side = 3
+            close_size = long_size
+        elif short_size > 0.0 and long_size == 0.0:
+            position_side = "SHORT"
+            close_side = 4
+            close_size = short_size
+        elif long_size > 0.0 and short_size > 0.0:
+            position_side = "HEDGED"
+            if long_size >= short_size:
+                close_side = 3
+                close_size = long_size
+            else:
+                close_side = 4
+                close_size = short_size
+        else:
+            position_side = "FLAT"
+            close_side = None
+            close_size = 0.0
+
+        return {
+            "has_position": has_position,
+            "position_side": position_side,
+            "long_size": float(long_size),
+            "short_size": float(short_size),
+            "close_side": close_side,
+            "close_size": float(close_size),
+        }
+
+    def _force_flatten_ledger_position(self, symbol: str, state: Dict, reason: str) -> bool:
+        if not self.position_ledger:
+            return True
+        try:
+            ledger_pos = self.position_ledger.get_position(symbol)
+        except Exception as exc:
+            logger.warning("CLOSE_40015_LEDGER_READ_FAIL symbol={} err={}", symbol, exc)
+            return False
+        if getattr(ledger_pos, "side", "FLAT") == "FLAT":
+            return True
+
+        close_price = float(state.get("last_price") or state.get("entry_price") or getattr(ledger_pos, "entry_price", 0.0) or 0.0)
+        try:
+            self.position_ledger.close_position(
+                symbol=symbol,
+                close_price=close_price,
+                realized_pnl=0.0,
+                close_reason=reason,
+                fees_estimated=0.0,
+            )
+            state["closed_trade_recorded"] = True
+            state["last_exit_reason"] = reason
+            logger.warning(
+                "CLOSE_40015_EXCHANGE_FLAT_FORCE_LOCAL_CLOSE symbol={} ledger_side={} close_price={:.6f} reason={}",
+                symbol,
+                getattr(ledger_pos, "side", "unknown"),
+                close_price,
+                reason,
+            )
+            return True
+        except Exception as exc:
+            logger.error("CLOSE_40015_EXCHANGE_FLAT_FORCE_LOCAL_CLOSE_FAIL symbol={} err={}", symbol, exc)
+            return False
+
+    def _reconcile_close_after_40015(
+        self,
+        symbol: str,
+        attempted_close_side: int,
+        requested_size: float,
+        state: Dict,
+        reason: str,
+    ) -> Dict[str, Any]:
+        logger.warning(
+            "CLOSE_40015_RECONCILE_ATTEMPT symbol={} attempted_side={} requested_size={:.8f} reason={}",
+            symbol,
+            attempted_close_side,
+            float(requested_size or 0.0),
+            reason,
+        )
+        if self.dry_run:
+            return {"resolved": False, "force_success": False, "mode": "dry_run", "result": None}
+
+        try:
+            before = self._get_exchange_position_snapshot(symbol)
+        except Exception as exc:
+            logger.error("CLOSE_40015_RECONCILE_FAILED symbol={} stage=position_fetch err={}", symbol, exc)
+            return {"resolved": False, "force_success": False, "mode": "position_fetch_failed", "result": None}
+
+        logger.warning(
+            "CLOSE_40015_EXCHANGE_POS symbol={} position_side={} long_size={:.8f} short_size={:.8f}",
+            symbol,
+            before.get("position_side"),
+            float(before.get("long_size") or 0.0),
+            float(before.get("short_size") or 0.0),
+        )
+
+        if not before.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat",
+                "result": {"reconcile_mode": "exchange_flat", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        cancel_stats = self._cancel_open_orders_for_symbol(symbol)
+        logger.warning(
+            "CLOSE_40015_OPEN_ORDERS symbol={} open_orders={} attempted={} cancelled={} failed={}",
+            symbol,
+            int(cancel_stats.get("open_orders", 0)),
+            int(cancel_stats.get("attempted", 0)),
+            int(cancel_stats.get("cancelled", 0)),
+            int(cancel_stats.get("failed", 0)),
+        )
+
+        if self.close_reconcile_pause_seconds > 0:
+            time.sleep(self.close_reconcile_pause_seconds)
+
+        try:
+            after_cancel = self._get_exchange_position_snapshot(symbol)
+        except Exception as exc:
+            logger.error("CLOSE_40015_RECONCILE_FAILED symbol={} stage=post_cancel_fetch err={}", symbol, exc)
+            return {"resolved": False, "force_success": False, "mode": "post_cancel_fetch_failed", "result": None}
+
+        if not after_cancel.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat_after_cancel",
+                "result": {"reconcile_mode": "exchange_flat_after_cancel", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        close_side = after_cancel.get("close_side") or attempted_close_side
+        close_size = float(after_cancel.get("close_size") or 0.0)
+        if close_size <= 0:
+            close_size = float(requested_size or 0.0)
+        if close_size <= 0:
+            return {"resolved": False, "force_success": False, "mode": "invalid_close_size", "result": None}
+        if requested_size and requested_size > 0:
+            close_size = min(close_size, float(requested_size))
+
+        logger.warning(
+            "CLOSE_40015_RETRY_FLATTEN symbol={} close_side={} close_size={:.8f} exchange_side={}",
+            symbol,
+            close_side,
+            close_size,
+            after_cancel.get("position_side"),
+        )
+        retry_result = self._place_order(symbol=symbol, side=int(close_side), size=float(close_size))
+        retry_success = self._order_success(retry_result) and (not self._is_40015(retry_result))
+        logger.warning(
+            "CLOSE_40015_RECONCILE_RESULT symbol={} ok={} code={} msg={}",
+            symbol,
+            retry_success,
+            retry_result.get("code") if isinstance(retry_result, dict) else None,
+            str(retry_result.get("msg") or retry_result.get("error") or "")[:220] if isinstance(retry_result, dict) else None,
+        )
+        if retry_success:
+            return {"resolved": True, "force_success": False, "mode": "retry_success", "result": retry_result}
+
+        try:
+            final_snapshot = self._get_exchange_position_snapshot(symbol)
+        except Exception:
+            final_snapshot = {"has_position": True}
+        if not final_snapshot.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat_after_retry",
+                "result": {"reconcile_mode": "exchange_flat_after_retry", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        return {"resolved": False, "force_success": False, "mode": "retry_failed", "result": retry_result}
+
     def _log_exit_attribution(self, symbol: str, reason: str, state: Dict, exit_ref: Dict):
         entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
         entry_meta = state.get("entry_meta") or {}
@@ -635,38 +916,53 @@ class BreakoutStraddleManager:
 
     def _close_long(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
         result = self._place_order(symbol, side=3, size=size)
+        force_success = False
+        reconcile_mode = None
         if self._is_40015(result):
-            self._emit_exit_ai_log(
-                stage="Exit Execution",
+            reconcile = self._reconcile_close_after_40015(
                 symbol=symbol,
+                attempted_close_side=3,
+                requested_size=size,
+                state=state,
                 reason=reason,
-                input_payload={
-                    "symbol": symbol,
-                    "side": "LONG",
-                    "size": size,
-                    "state": state.get("state"),
-                    "entry_price": state.get("entry_price"),
-                    "last_price": state.get("last_price"),
-                    "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
-                    "regime": self._extract_entry_regime(state),
-                    "entry_meta": state.get("entry_meta"),
-                    "entry_order_ids": state.get("entry_order_ids"),
-                    "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
-                    "realized_pnl_gross": state.get("realized_pnl"),
-                    "fees_estimated": state.get("fees_estimated_total", 0.0),
-                },
-                output_payload={
-                    "side": 3,
-                    "size": size,
-                    "dry_run": self.dry_run,
-                    "success": False,
-                    "error_code": result.get("code") if isinstance(result, dict) else None,
-                    "error_msg": result.get("msg") if isinstance(result, dict) else None,
-                },
             )
-            self._enter_cooldown(state, "40015")
-            return False
-        success = self._order_success(result)
+            reconcile_mode = reconcile.get("mode")
+            if reconcile.get("resolved"):
+                force_success = bool(reconcile.get("force_success"))
+                result = reconcile.get("result") if isinstance(reconcile.get("result"), dict) else result
+            else:
+                self._emit_exit_ai_log(
+                    stage="Exit Execution",
+                    symbol=symbol,
+                    reason=reason,
+                    input_payload={
+                        "symbol": symbol,
+                        "side": "LONG",
+                        "size": size,
+                        "state": state.get("state"),
+                        "entry_price": state.get("entry_price"),
+                        "last_price": state.get("last_price"),
+                        "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                        "regime": self._extract_entry_regime(state),
+                        "entry_meta": state.get("entry_meta"),
+                        "entry_order_ids": state.get("entry_order_ids"),
+                        "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                        "realized_pnl_gross": state.get("realized_pnl"),
+                        "fees_estimated": state.get("fees_estimated_total", 0.0),
+                    },
+                    output_payload={
+                        "side": 3,
+                        "size": size,
+                        "dry_run": self.dry_run,
+                        "success": False,
+                        "error_code": result.get("code") if isinstance(result, dict) else None,
+                        "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                        "reconcile_mode": reconcile_mode,
+                    },
+                )
+                self._enter_cooldown(state, "40015")
+                return False
+        success = force_success or self._order_success(result)
         exit_ref = self._extract_order_refs(result)
         if exit_ref:
             state.setdefault("exit_order_ids", []).append(exit_ref)
@@ -705,6 +1001,7 @@ class BreakoutStraddleManager:
                 "realized_pnl": realized_net,
                 "realized_pnl_gross": realized_gross,
                 "fees_estimated": fees_total,
+                "reconcile_mode": reconcile_mode,
             },
             order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
         )
@@ -713,38 +1010,53 @@ class BreakoutStraddleManager:
 
     def _close_short(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
         result = self._place_order(symbol, side=4, size=size)
+        force_success = False
+        reconcile_mode = None
         if self._is_40015(result):
-            self._emit_exit_ai_log(
-                stage="Exit Execution",
+            reconcile = self._reconcile_close_after_40015(
                 symbol=symbol,
+                attempted_close_side=4,
+                requested_size=size,
+                state=state,
                 reason=reason,
-                input_payload={
-                    "symbol": symbol,
-                    "side": "SHORT",
-                    "size": size,
-                    "state": state.get("state"),
-                    "entry_price": state.get("entry_price"),
-                    "last_price": state.get("last_price"),
-                    "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
-                    "regime": self._extract_entry_regime(state),
-                    "entry_meta": state.get("entry_meta"),
-                    "entry_order_ids": state.get("entry_order_ids"),
-                    "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
-                    "realized_pnl_gross": state.get("realized_pnl"),
-                    "fees_estimated": state.get("fees_estimated_total", 0.0),
-                },
-                output_payload={
-                    "side": 4,
-                    "size": size,
-                    "dry_run": self.dry_run,
-                    "success": False,
-                    "error_code": result.get("code") if isinstance(result, dict) else None,
-                    "error_msg": result.get("msg") if isinstance(result, dict) else None,
-                },
             )
-            self._enter_cooldown(state, "40015")
-            return False
-        success = self._order_success(result)
+            reconcile_mode = reconcile.get("mode")
+            if reconcile.get("resolved"):
+                force_success = bool(reconcile.get("force_success"))
+                result = reconcile.get("result") if isinstance(reconcile.get("result"), dict) else result
+            else:
+                self._emit_exit_ai_log(
+                    stage="Exit Execution",
+                    symbol=symbol,
+                    reason=reason,
+                    input_payload={
+                        "symbol": symbol,
+                        "side": "SHORT",
+                        "size": size,
+                        "state": state.get("state"),
+                        "entry_price": state.get("entry_price"),
+                        "last_price": state.get("last_price"),
+                        "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                        "regime": self._extract_entry_regime(state),
+                        "entry_meta": state.get("entry_meta"),
+                        "entry_order_ids": state.get("entry_order_ids"),
+                        "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                        "realized_pnl_gross": state.get("realized_pnl"),
+                        "fees_estimated": state.get("fees_estimated_total", 0.0),
+                    },
+                    output_payload={
+                        "side": 4,
+                        "size": size,
+                        "dry_run": self.dry_run,
+                        "success": False,
+                        "error_code": result.get("code") if isinstance(result, dict) else None,
+                        "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                        "reconcile_mode": reconcile_mode,
+                    },
+                )
+                self._enter_cooldown(state, "40015")
+                return False
+        success = force_success or self._order_success(result)
         exit_ref = self._extract_order_refs(result)
         if exit_ref:
             state.setdefault("exit_order_ids", []).append(exit_ref)
@@ -783,6 +1095,7 @@ class BreakoutStraddleManager:
                 "realized_pnl": realized_net,
                 "realized_pnl_gross": realized_gross,
                 "fees_estimated": fees_total,
+                "reconcile_mode": reconcile_mode,
             },
             order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
         )
