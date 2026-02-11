@@ -133,13 +133,13 @@ class BreakoutStraddleManager:
 
         state = self._get_state(symbol)
         if state.get("adopted_from_ledger"):
-            logger.warning("✅ STRADDLE_ALREADY_ADOPTED symbol=%s", symbol)
+            logger.warning("✅ STRADDLE_ALREADY_ADOPTED symbol={}", symbol)
             return True
         if state["state"] in {self.STATE_RUNNER_LONG, self.STATE_RUNNER_SHORT}:
             return True
         if state["state"] == self.STATE_HEDGED:
             logger.warning(
-                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s reason=state_hedged",
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} reason=state_hedged",
                 symbol,
             )
             return False
@@ -148,6 +148,11 @@ class BreakoutStraddleManager:
         size = float(getattr(ledger_pos, "size", 0) or 0)
         entry_time = float(getattr(ledger_pos, "open_time", 0) or 0)
         entry_price = float(getattr(ledger_pos, "entry_price", 0) or 0)
+        ledger_entry_reason = self._normalize_entry_reason(getattr(ledger_pos, "entry_reason", None))
+        ledger_entry_regime_raw = getattr(ledger_pos, "entry_regime", None)
+        ledger_entry_regime = str(ledger_entry_regime_raw).strip().lower() if ledger_entry_regime_raw is not None else ""
+        if not ledger_entry_regime:
+            ledger_entry_regime = "unknown"
         age_sec = None
         try:
             age_sec = int(time.time() - entry_time) if entry_time else None
@@ -158,19 +163,19 @@ class BreakoutStraddleManager:
 
         if side not in ("LONG", "SHORT"):
             logger.warning(
-                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=unknown_side",
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=unknown_side",
                 symbol, side, size, age_sec
             )
             return False
         if size <= 0:
             logger.warning(
-                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=zero_size",
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=zero_size",
                 symbol, side, size, age_sec
             )
             return False
         if age_sec is not None and age_sec > adoption_window_sec:
             logger.warning(
-                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=too_old",
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=too_old",
                 symbol, side, size, age_sec
             )
             return False
@@ -191,11 +196,19 @@ class BreakoutStraddleManager:
         state["last_update_ts"] = now_ts
         state["reconcile_checked"] = True
         state["adopted_from_ledger"] = True
+        state["entry_reason"] = ledger_entry_reason
+        state["entry_regime"] = ledger_entry_regime
+        entry_meta = state.get("entry_meta")
+        if not isinstance(entry_meta, dict):
+            entry_meta = {}
+        entry_meta.setdefault("entry_reason", ledger_entry_reason)
+        entry_meta["regime"] = ledger_entry_regime
+        state["entry_meta"] = entry_meta
         state["adopted_ts"] = now_ts
 
         logger.warning(
-            "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s entry_price=%s runner_state=%s",
-            symbol, side, size, age_sec, entry_price, runner_state
+            "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} entry_price={} runner_state={} entry_reason={} entry_regime={}",
+            symbol, side, size, age_sec, entry_price, runner_state, ledger_entry_reason, ledger_entry_regime
         )
         return True
 
@@ -1017,21 +1030,21 @@ class BreakoutStraddleManager:
 
                 if side not in ("LONG", "SHORT"):
                     logger.warning(
-                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=unknown_side",
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=unknown_side",
                         symbol, side, size, age_sec
                     )
                     return False
 
                 if size <= 0:
                     logger.warning(
-                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=zero_size",
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=zero_size",
                         symbol, side, size, age_sec
                     )
                     return False
 
                 if age_sec is not None and age_sec > adoption_window_sec:
                     logger.warning(
-                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s reason=too_old",
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=too_old",
                         symbol, side, size, age_sec
                     )
                     return False
@@ -1039,7 +1052,7 @@ class BreakoutStraddleManager:
                 st = self._get_state(symbol)
                 if st.get("adopted_from_ledger"):
                     logger.warning(
-                        "✅ STRADDLE_ALREADY_ADOPTED symbol=%s side=%s size=%s age_sec=%s",
+                        "✅ STRADDLE_ALREADY_ADOPTED symbol={} side={} size={} age_sec={}",
                         symbol, side, size, age_sec
                     )
                     return True
@@ -1078,14 +1091,24 @@ class BreakoutStraddleManager:
                 st["last_update_ts"] = now_ts
                 st["reconcile_checked"] = True
                 st["adopted_from_ledger"] = True
-                ledger_entry_reason = getattr(ledger_pos, "entry_reason", None)
-                if not st.get("entry_reason"):
-                    st["entry_reason"] = ledger_entry_reason or "ADOPTED"
+                ledger_entry_reason = self._normalize_entry_reason(getattr(ledger_pos, "entry_reason", None))
+                ledger_entry_regime_raw = getattr(ledger_pos, "entry_regime", None)
+                ledger_entry_regime = str(ledger_entry_regime_raw).strip().lower() if ledger_entry_regime_raw is not None else ""
+                if not ledger_entry_regime:
+                    ledger_entry_regime = "unknown"
+                st["entry_reason"] = ledger_entry_reason
+                st["entry_regime"] = ledger_entry_regime
+                entry_meta = st.get("entry_meta")
+                if not isinstance(entry_meta, dict):
+                    entry_meta = {}
+                entry_meta.setdefault("entry_reason", ledger_entry_reason)
+                entry_meta["regime"] = ledger_entry_regime
+                st["entry_meta"] = entry_meta
                 st["adopted_ts"] = now_ts
 
                 logger.warning(
-                    "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol=%s side=%s size=%s age_sec=%s entry_price=%s runner_state=%s",
-                    symbol, side, size, age_sec, entry_price, runner_state
+                    "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} entry_price={} runner_state={} entry_reason={} entry_regime={}",
+                    symbol, side, size, age_sec, entry_price, runner_state, ledger_entry_reason, ledger_entry_regime
                 )
 
                 return True

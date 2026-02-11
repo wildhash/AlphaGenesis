@@ -40,12 +40,23 @@ def normalize_reason(value: Optional[str]) -> str:
     return value_s if value_s else "None"
 
 
+def is_unattributed_exchange_close(exit_reason: str, entry_reason: str, regime: str) -> bool:
+    exit_reason_norm = str(exit_reason or "").strip().lower()
+    entry_reason_norm = normalize_reason(entry_reason).strip().lower()
+    regime_norm = str(regime or "").strip().lower()
+    if not regime_norm:
+        regime_norm = "unknown"
+    if exit_reason_norm != "exchange_closed":
+        return False
+    return entry_reason_norm in {"none", "legacy_none", "unknown"} and regime_norm in {"none", "unknown"}
+
+
 def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_abs_pnl: float) -> tuple[List[Dict[str, object]], Dict[str, object]]:
     try:
         with open(ledger_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception:
-        return [], {"rows_total": 0, "rows_in_window": 0, "excluded_flat": 0, "excluded_near_zero": 0}
+        return [], {"rows_total": 0, "rows_in_window": 0, "excluded_flat": 0, "excluded_near_zero": 0, "excluded_exchange_closed_unknown": 0}
 
     if isinstance(data, dict):
         rows = data.get("closed_trades", [])
@@ -57,6 +68,7 @@ def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_a
     trades: List[Dict[str, object]] = []
     excluded_flat = 0
     excluded_near_zero = 0
+    excluded_exchange_closed_unknown = 0
     rows_in_window = 0
     for row in rows:
         if not isinstance(row, dict):
@@ -87,7 +99,12 @@ def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_a
         if not pnl_is_net:
             pnl_float -= fees_float
 
+        entry_reason = normalize_reason(row.get("entry_reason"))
+        regime = str(row.get("entry_regime") or "unknown").strip().lower() or "unknown"
         exit_reason = str(row.get("close_reason") or "UNKNOWN")
+        if is_unattributed_exchange_close(exit_reason, entry_reason, regime):
+            excluded_exchange_closed_unknown += 1
+            continue
         if not include_flat and exit_reason.strip().lower() == "exchange_flat_detected":
             excluded_flat += 1
             continue
@@ -99,9 +116,9 @@ def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_a
             {
                 "ts_ms": ts_ms,
                 "symbol": str(row.get("symbol") or "unknown").lower(),
-                "entry_reason": normalize_reason(row.get("entry_reason")),
+                "entry_reason": entry_reason,
                 "exit_reason": exit_reason,
-                "regime": str(row.get("entry_regime") or "unknown"),
+                "regime": regime,
                 "pnl": pnl_float,
             }
         )
@@ -110,6 +127,7 @@ def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_a
         "rows_in_window": rows_in_window,
         "excluded_flat": excluded_flat,
         "excluded_near_zero": excluded_near_zero,
+        "excluded_exchange_closed_unknown": excluded_exchange_closed_unknown,
     }
     return trades, meta
 
@@ -342,13 +360,19 @@ def main() -> int:
 
     excluded_flat_generic = 0
     excluded_near_zero_generic = 0
+    excluded_exchange_closed_unknown_generic = 0
     filtered_trades: List[Dict[str, object]] = []
     for trade in trades:
         exit_reason = str(trade.get("exit_reason") or "UNKNOWN").strip().lower()
+        entry_reason = normalize_reason(str(trade.get("entry_reason") or "None"))
+        regime = str(trade.get("regime") or "unknown").strip().lower() or "unknown"
         pnl_val = trade.get("pnl")
         try:
             pnl_float = float(pnl_val)
         except (TypeError, ValueError):
+            continue
+        if is_unattributed_exchange_close(exit_reason, entry_reason, regime):
+            excluded_exchange_closed_unknown_generic += 1
             continue
         if not args.include_flat and exit_reason == "exchange_flat_detected":
             excluded_flat_generic += 1
@@ -357,27 +381,32 @@ def main() -> int:
             excluded_near_zero_generic += 1
             continue
         trade["pnl"] = pnl_float
+        trade["entry_reason"] = entry_reason
+        trade["regime"] = regime
         filtered_trades.append(trade)
     trades = filtered_trades
 
     total_excluded_flat = int(ledger_meta.get("excluded_flat", 0)) + excluded_flat_generic
     total_excluded_near_zero = int(ledger_meta.get("excluded_near_zero", 0)) + excluded_near_zero_generic
+    total_excluded_exchange_closed_unknown = int(ledger_meta.get("excluded_exchange_closed_unknown", 0)) + excluded_exchange_closed_unknown_generic
     total_rows_in_window = int(ledger_meta.get("rows_in_window", 0))
     if ledger_meta.get("rows_in_window", 0) > 0:
         print(
-            "FILTER: excluded_flat={} excluded_near_zero={} eps={} include_flat={} (ledger_rows_in_window={})".format(
+            "FILTER: excluded_flat={} excluded_near_zero={} excluded_exchange_closed_unknown={} eps={} include_flat={} (ledger_rows_in_window={})".format(
                 total_excluded_flat,
                 total_excluded_near_zero,
+                total_excluded_exchange_closed_unknown,
                 args.min_abs_pnl,
                 bool(args.include_flat),
                 total_rows_in_window,
             )
         )
-    elif total_excluded_flat > 0 or total_excluded_near_zero > 0:
+    elif total_excluded_flat > 0 or total_excluded_near_zero > 0 or total_excluded_exchange_closed_unknown > 0:
         print(
-            "FILTER: excluded_flat={} excluded_near_zero={} eps={} include_flat={}".format(
+            "FILTER: excluded_flat={} excluded_near_zero={} excluded_exchange_closed_unknown={} eps={} include_flat={}".format(
                 total_excluded_flat,
                 total_excluded_near_zero,
+                total_excluded_exchange_closed_unknown,
                 args.min_abs_pnl,
                 bool(args.include_flat),
             )

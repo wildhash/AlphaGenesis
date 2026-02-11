@@ -156,12 +156,13 @@ class LoserTupleKillSwitch:
         position_ledger: Any,
         cutoff_ts: float,
         stats: Dict[str, Dict[str, Any]],
-    ) -> tuple[int, int, int, int, int]:
+    ) -> tuple[int, int, int, int, int, int]:
         total_rows = 0
         used_rows = 0
         skipped_no_pnl = 0
         skipped_flat_reason = 0
         skipped_near_zero = 0
+        skipped_exchange_closed_unknown = 0
         min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
         try:
             if hasattr(position_ledger, "get_recent_closed_trades"):
@@ -169,10 +170,10 @@ class LoserTupleKillSwitch:
             elif hasattr(position_ledger, "get_closed_trades"):
                 trades = position_ledger.get_closed_trades(limit=5000)
             else:
-                return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
+                return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero, skipped_exchange_closed_unknown
         except Exception as exc:
             logger.warning("LOSER_KILL_SWITCH_LEDGER_READ_FAILED err={}", exc)
-            return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
+            return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero, skipped_exchange_closed_unknown
 
         for trade in trades:
             total_rows += 1
@@ -191,6 +192,11 @@ class LoserTupleKillSwitch:
             symbol = self._obj_get(trade, "symbol")
             entry_reason = self._obj_get(trade, "entry_reason")
             regime = self._obj_get(trade, "entry_regime")
+            entry_reason_norm = self._normalize_reason(entry_reason).lower()
+            regime_norm = self._normalize_regime(regime).lower()
+            if close_reason == "exchange_closed" and entry_reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+                skipped_exchange_closed_unknown += 1
+                continue
             pnl_value = self._obj_get(trade, "realized_pnl")
             fees_estimated = self._obj_get(trade, "fees_estimated", 0.0)
             pnl_is_net = bool(self._obj_get(trade, "pnl_is_net", False))
@@ -213,14 +219,15 @@ class LoserTupleKillSwitch:
                 continue
             self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
             used_rows += 1
-        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
+        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero, skipped_exchange_closed_unknown
 
-    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> tuple[int, int, int, int, int]:
+    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> tuple[int, int, int, int, int, int]:
         total_rows = 0
         used_rows = 0
         skipped_no_pnl = 0
         skipped_flat_reason = 0
         skipped_near_zero = 0
+        skipped_exchange_closed_unknown = 0
         min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
         conn = sqlite3.connect(self.db_path)
         query = """
@@ -251,6 +258,11 @@ class LoserTupleKillSwitch:
             if exit_reason == "exchange_flat_detected":
                 skipped_flat_reason += 1
                 continue
+            entry_reason_norm = self._normalize_reason(entry_reason).lower()
+            regime_norm = self._normalize_regime(regime).lower()
+            if exit_reason == "exchange_closed" and entry_reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+                skipped_exchange_closed_unknown += 1
+                continue
             pnl = out.get("realized_pnl")
             if pnl is None:
                 pnl = inp.get("realized_pnl")
@@ -268,7 +280,7 @@ class LoserTupleKillSwitch:
             self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
             used_rows += 1
         conn.close()
-        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
+        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero, skipped_exchange_closed_unknown
 
     def refresh(self, force: bool = False, position_ledger: Optional[Any] = None) -> int:
         now = time.time()
@@ -297,17 +309,26 @@ class LoserTupleKillSwitch:
             skipped_no_pnl = 0
             skipped_flat_reason = 0
             skipped_near_zero = 0
+            skipped_exchange_closed_unknown = 0
             min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
 
             if position_ledger is not None:
-                total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero = self._ingest_from_ledger(position_ledger, cutoff_ts, stats)
-                logger.info(
-                    "LOSER_KILL_SWITCH_INGEST source=ledger rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} eps={} lookback_h={}",
+                (
                     total_rows,
                     used_rows,
                     skipped_no_pnl,
                     skipped_flat_reason,
                     skipped_near_zero,
+                    skipped_exchange_closed_unknown,
+                ) = self._ingest_from_ledger(position_ledger, cutoff_ts, stats)
+                logger.info(
+                    "LOSER_KILL_SWITCH_INGEST source=ledger rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} skipped_exchange_closed_unknown={} eps={} lookback_h={}",
+                    total_rows,
+                    used_rows,
+                    skipped_no_pnl,
+                    skipped_flat_reason,
+                    skipped_near_zero,
+                    skipped_exchange_closed_unknown,
                     min_abs_pnl,
                     self.lookback_hours,
                 )
@@ -316,14 +337,22 @@ class LoserTupleKillSwitch:
                 if not os.path.exists(self.db_path):
                     logger.warning("LOSER_KILL_SWITCH_DB_MISSING path={}", self.db_path)
                 else:
-                    total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero = self._ingest_from_ai_logs(since_ms, stats)
-                    logger.info(
-                        "LOSER_KILL_SWITCH_INGEST source=ai_logs rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} eps={} lookback_h={}",
+                    (
                         total_rows,
                         used_rows,
                         skipped_no_pnl,
                         skipped_flat_reason,
                         skipped_near_zero,
+                        skipped_exchange_closed_unknown,
+                    ) = self._ingest_from_ai_logs(since_ms, stats)
+                    logger.info(
+                        "LOSER_KILL_SWITCH_INGEST source=ai_logs rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} skipped_exchange_closed_unknown={} eps={} lookback_h={}",
+                        total_rows,
+                        used_rows,
+                        skipped_no_pnl,
+                        skipped_flat_reason,
+                        skipped_near_zero,
+                        skipped_exchange_closed_unknown,
                         min_abs_pnl,
                         self.lookback_hours,
                     )
@@ -946,7 +975,7 @@ class SDMTradingEngine:
 
         if not self._warned_pnl_field:
             logger.warning(
-                "⚠️ Could not find unrealized P&L field in position. Available keys: %s",
+                "⚠️ Could not find unrealized P&L field in position. Available keys: {}",
                 list(pos.keys())
             )
             self._warned_pnl_field = True
@@ -1287,7 +1316,7 @@ class SDMTradingEngine:
                 f"attempted={new_side}"
             )
             logger.warning(
-                "🚨 BLOCKED OPPOSING TRADE: %s | Existing: %s (Size: %s) | Attempted: %s",
+                "🚨 BLOCKED OPPOSING TRADE: {} | Existing: {} (Size: {}) | Attempted: {}",
                 symbol,
                 existing_pos.side,
                 existing_pos.size,
@@ -1895,7 +1924,7 @@ class SDMTradingEngine:
                 chosen.volatility_percentile
             )
             logger.debug(
-                "Regime detected for %s: %s (confidence=%.2f, trend=%.3f, vol_pct=%.1f)",
+                "Regime detected for {}: {} (confidence={:.2f}, trend={:.3f}, vol_pct={:.1f})",
                 symbol,
                 mapped.value,
                 chosen.confidence,
@@ -2377,7 +2406,7 @@ class SDMTradingEngine:
                 return
 
             if action.get('reason') == 'LOW_VOL_SHORT_GATE_X3_WITH_ATR':
-                logger.info("STRADDLE_BYPASS_LOW_VOL_ATR symbol=%s confidence=%.3f", symbol, float(action.get('confidence', 0.0)))
+                logger.info("STRADDLE_BYPASS_LOW_VOL_ATR symbol={} confidence={:.3f}", symbol, float(action.get('confidence', 0.0)))
             else:
                 if action.get('confidence', 0.0) >= self.straddle_confidence_threshold:
                     size_scale = float(action.get("size_scale", 1.0) or 1.0)
@@ -2432,7 +2461,7 @@ class SDMTradingEngine:
                         size_floor_applied = True
                         action["size_floor_applied"] = True
                         logger.info(
-                            "SIZE_FLOOR_APPLIED symbol=%s reason=%s price=%.6f old_qty=%.8f new_qty=%.8f min_notional=%.2f",
+                            "SIZE_FLOOR_APPLIED symbol={} reason={} price={:.6f} old_qty={:.8f} new_qty={:.8f} min_notional={:.2f}",
                             symbol, action.get('reason'), price, old_qty, action['position_size'], MIN_NOTIONAL_USDT
                         )
             action.setdefault("size_floor_applied", size_floor_applied)
@@ -2949,8 +2978,8 @@ class SDMTradingEngine:
         active_straddles = len(self.straddle_manager.active_symbols())
         threshold = self.straddle_confidence_threshold
         logger.info(
-            "📡 SIGNAL DEBUG: %s | Action: %s | Confidence: %.2f | Threshold: %.2f | Active Straddles: %d | "
-            "Blocked by Intent Graph: %s",
+            "📡 SIGNAL DEBUG: {} | Action: {} | Confidence: {:.2f} | Threshold: {:.2f} | Active Straddles: {} | "
+            "Blocked by Intent Graph: {}",
             symbol,
             direction,
             confidence,
@@ -2963,7 +2992,7 @@ class SDMTradingEngine:
         if price > 0:
             atr_ratio = self.straddle_manager.get_atr_ratio(symbol, price)
             logger.info(
-                "📈 VOLATILITY: %s ATR ratio: %.2f | Normal volatility: %s",
+                "📈 VOLATILITY: {} ATR ratio: {:.2f} | Normal volatility: {}",
                 symbol,
                 atr_ratio,
                 atr_ratio > 0.7
@@ -3137,7 +3166,7 @@ class SDMTradingEngine:
             gamma_squeeze = price_acceleration and volume_spike
             if gamma_squeeze:
                 logger.warning(
-                    "⚠️ GAMMA SQUEEZE DETECTED: %s | Accel: %.2f%% | Volume: %.1fx",
+                    "⚠️ GAMMA SQUEEZE DETECTED: {} | Accel: {:.2f}% | Volume: {:.1f}x",
                     symbol,
                     recent_return * 100,
                     volume_ratio
