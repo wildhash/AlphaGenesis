@@ -340,14 +340,46 @@ def main() -> int:
     if conn is not None:
         conn.close()
 
+    excluded_flat_generic = 0
+    excluded_near_zero_generic = 0
+    filtered_trades: List[Dict[str, object]] = []
+    for trade in trades:
+        exit_reason = str(trade.get("exit_reason") or "UNKNOWN").strip().lower()
+        pnl_val = trade.get("pnl")
+        try:
+            pnl_float = float(pnl_val)
+        except (TypeError, ValueError):
+            continue
+        if not args.include_flat and exit_reason == "exchange_flat_detected":
+            excluded_flat_generic += 1
+            continue
+        if args.min_abs_pnl and abs(pnl_float) < args.min_abs_pnl:
+            excluded_near_zero_generic += 1
+            continue
+        trade["pnl"] = pnl_float
+        filtered_trades.append(trade)
+    trades = filtered_trades
+
+    total_excluded_flat = int(ledger_meta.get("excluded_flat", 0)) + excluded_flat_generic
+    total_excluded_near_zero = int(ledger_meta.get("excluded_near_zero", 0)) + excluded_near_zero_generic
+    total_rows_in_window = int(ledger_meta.get("rows_in_window", 0))
     if ledger_meta.get("rows_in_window", 0) > 0:
         print(
             "FILTER: excluded_flat={} excluded_near_zero={} eps={} include_flat={} (ledger_rows_in_window={})".format(
-                ledger_meta.get("excluded_flat", 0),
-                ledger_meta.get("excluded_near_zero", 0),
+                total_excluded_flat,
+                total_excluded_near_zero,
                 args.min_abs_pnl,
                 bool(args.include_flat),
-                ledger_meta.get("rows_in_window", 0),
+                total_rows_in_window,
+            )
+        )
+    elif total_excluded_flat > 0 or total_excluded_near_zero > 0:
+        print(
+            "FILTER: excluded_flat={} excluded_near_zero={} eps={} include_flat={}".format(
+                total_excluded_flat,
+                total_excluded_near_zero,
+                args.min_abs_pnl,
+                bool(args.include_flat),
             )
         )
 
