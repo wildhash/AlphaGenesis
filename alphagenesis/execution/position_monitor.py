@@ -11,7 +11,7 @@ Updates ledger, journal, and bandit automatically.
 """
 import time
 import threading
-from typing import Dict, List, Optional
+from typing import Dict, List
 from loguru import logger
 
 
@@ -354,79 +354,6 @@ class PositionMonitor:
                 }
 
         return exchange_map
-
-    def _fetch_single_exchange_position(self, symbol: str) -> Optional[Dict]:
-        """Fetch a single symbol position snapshot from exchange."""
-        try:
-            response = self.weex.get_position(symbol)
-        except Exception as e:
-            logger.warning("PARTIAL_CLOSE_RECONCILE_FETCH_FAILED symbol={} error={}", symbol, e)
-            return None
-
-        if isinstance(response, dict) and isinstance(response.get('position'), list):
-            data = response.get('position')
-        else:
-            data = response.get('data') if isinstance(response, dict) else response
-        if isinstance(data, dict):
-            for key in ('position', 'positions', 'data'):
-                if isinstance(data.get(key), list):
-                    data = data.get(key)
-                    break
-
-        if not data:
-            return None
-
-        pos_list = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
-        for pos in pos_list:
-            raw_size = None
-            for key in ('size', 'total', 'position', 'pos', 'qty'):
-                if key in pos and pos[key] is not None:
-                    raw_size = pos[key]
-                    break
-
-            try:
-                size = float(raw_size or 0.0)
-            except (TypeError, ValueError):
-                size = 0.0
-
-            if abs(size) <= self.partial_close_size_epsilon:
-                continue
-
-            side_value = pos.get('side') or pos.get('hold_side') or pos.get('holdSide')
-            if isinstance(side_value, str):
-                side_str = side_value.upper()
-            else:
-                try:
-                    side_str = 'LONG' if int(side_value or 1) == 1 else 'SHORT'
-                except (TypeError, ValueError):
-                    side_str = 'LONG'
-
-            entry_price = 0.0
-            for key in ('open_price', 'avg_open_price', 'avgOpenPrice', 'entry_price'):
-                if key in pos and pos[key] is not None:
-                    try:
-                        entry_price = float(pos[key])
-                    except (TypeError, ValueError):
-                        entry_price = 0.0
-                    break
-
-            mark_price = 0.0
-            for key in ('mark_price', 'markPrice', 'fair_price', 'last', 'last_price'):
-                if key in pos and pos[key] is not None:
-                    try:
-                        mark_price = float(pos[key])
-                    except (TypeError, ValueError):
-                        mark_price = 0.0
-                    break
-
-            return {
-                'side': side_str,
-                'size': abs(size),
-                'entry_price': entry_price,
-                'mark_price': mark_price,
-            }
-
-        return None
 
     def _determine_close_reason(self, symbol: str, ledger_pos) -> str:
         """
