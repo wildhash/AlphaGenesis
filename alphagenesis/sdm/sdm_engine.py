@@ -156,20 +156,23 @@ class LoserTupleKillSwitch:
         position_ledger: Any,
         cutoff_ts: float,
         stats: Dict[str, Dict[str, Any]],
-    ) -> tuple[int, int, int]:
+    ) -> tuple[int, int, int, int, int]:
         total_rows = 0
         used_rows = 0
         skipped_no_pnl = 0
+        skipped_flat_reason = 0
+        skipped_near_zero = 0
+        min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
         try:
             if hasattr(position_ledger, "get_recent_closed_trades"):
                 trades = position_ledger.get_recent_closed_trades(hours=self.lookback_hours, limit=5000)
             elif hasattr(position_ledger, "get_closed_trades"):
                 trades = position_ledger.get_closed_trades(limit=5000)
             else:
-                return total_rows, used_rows, skipped_no_pnl
+                return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
         except Exception as exc:
             logger.warning("LOSER_KILL_SWITCH_LEDGER_READ_FAILED err={}", exc)
-            return total_rows, used_rows, skipped_no_pnl
+            return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
 
         for trade in trades:
             total_rows += 1
@@ -178,6 +181,11 @@ class LoserTupleKillSwitch:
                 if close_time is not None and float(close_time) < cutoff_ts:
                     continue
             except (TypeError, ValueError):
+                continue
+
+            close_reason = str(self._obj_get(trade, "close_reason") or "").strip().lower()
+            if close_reason == "exchange_flat_detected":
+                skipped_flat_reason += 1
                 continue
 
             symbol = self._obj_get(trade, "symbol")
@@ -200,14 +208,20 @@ class LoserTupleKillSwitch:
                 fees_float = 0.0
             if not pnl_is_net:
                 pnl_float -= fees_float
+            if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+                skipped_near_zero += 1
+                continue
             self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
             used_rows += 1
-        return total_rows, used_rows, skipped_no_pnl
+        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
 
-    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> tuple[int, int, int]:
+    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> tuple[int, int, int, int, int]:
         total_rows = 0
         used_rows = 0
         skipped_no_pnl = 0
+        skipped_flat_reason = 0
+        skipped_near_zero = 0
+        min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
         conn = sqlite3.connect(self.db_path)
         query = """
             SELECT created_at_ms, payload_json
@@ -233,6 +247,10 @@ class LoserTupleKillSwitch:
                 or out.get("regime")
                 or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
             )
+            exit_reason = str(inp.get("exit_reason") or out.get("exit_reason") or "").strip().lower()
+            if exit_reason == "exchange_flat_detected":
+                skipped_flat_reason += 1
+                continue
             pnl = out.get("realized_pnl")
             if pnl is None:
                 pnl = inp.get("realized_pnl")
@@ -244,10 +262,13 @@ class LoserTupleKillSwitch:
             except (TypeError, ValueError):
                 skipped_no_pnl += 1
                 continue
+            if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+                skipped_near_zero += 1
+                continue
             self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
             used_rows += 1
         conn.close()
-        return total_rows, used_rows, skipped_no_pnl
+        return total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero
 
     def refresh(self, force: bool = False, position_ledger: Optional[Any] = None) -> int:
         now = time.time()
@@ -274,14 +295,20 @@ class LoserTupleKillSwitch:
             total_rows = 0
             used_rows = 0
             skipped_no_pnl = 0
+            skipped_flat_reason = 0
+            skipped_near_zero = 0
+            min_abs_pnl = max(0.0, float(os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")))
 
             if position_ledger is not None:
-                total_rows, used_rows, skipped_no_pnl = self._ingest_from_ledger(position_ledger, cutoff_ts, stats)
+                total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero = self._ingest_from_ledger(position_ledger, cutoff_ts, stats)
                 logger.info(
-                    "LOSER_KILL_SWITCH_INGEST source=ledger rows_total={} rows_used={} skipped_no_pnl={} lookback_h={}",
+                    "LOSER_KILL_SWITCH_INGEST source=ledger rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} eps={} lookback_h={}",
                     total_rows,
                     used_rows,
                     skipped_no_pnl,
+                    skipped_flat_reason,
+                    skipped_near_zero,
+                    min_abs_pnl,
                     self.lookback_hours,
                 )
 
@@ -289,12 +316,15 @@ class LoserTupleKillSwitch:
                 if not os.path.exists(self.db_path):
                     logger.warning("LOSER_KILL_SWITCH_DB_MISSING path={}", self.db_path)
                 else:
-                    total_rows, used_rows, skipped_no_pnl = self._ingest_from_ai_logs(since_ms, stats)
+                    total_rows, used_rows, skipped_no_pnl, skipped_flat_reason, skipped_near_zero = self._ingest_from_ai_logs(since_ms, stats)
                     logger.info(
-                        "LOSER_KILL_SWITCH_INGEST source=ai_logs rows_total={} rows_used={} skipped_no_pnl={} lookback_h={}",
+                        "LOSER_KILL_SWITCH_INGEST source=ai_logs rows_total={} rows_used={} skipped_no_pnl={} skipped_flat_reason={} skipped_near_zero={} eps={} lookback_h={}",
                         total_rows,
                         used_rows,
                         skipped_no_pnl,
+                        skipped_flat_reason,
+                        skipped_near_zero,
+                        min_abs_pnl,
                         self.lookback_hours,
                     )
         except Exception as exc:

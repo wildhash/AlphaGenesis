@@ -19,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", default="/opt/AlphaGenesis/tmp/ai_logs.sqlite", help="Path to ai_logs sqlite")
     parser.add_argument("--ledger", default="/opt/AlphaGenesis/tmp/position_ledger.json", help="Path to position ledger json")
     parser.add_argument("--service", default="sdm-trading.service", help="systemd service name")
+    parser.add_argument("--min-abs-pnl", type=float, default=0.001, help="Filter near-zero PnL exits (after fees)")
+    parser.add_argument("--include-flat", action="store_true", help="Include exchange_flat_detected exits")
     return parser.parse_args()
 
 
@@ -38,12 +40,12 @@ def normalize_reason(value: Optional[str]) -> str:
     return value_s if value_s else "None"
 
 
-def load_ledger_exits(ledger_path: str, since_ms: int) -> List[Dict[str, object]]:
+def load_ledger_exits(ledger_path: str, since_ms: int, include_flat: bool, min_abs_pnl: float) -> tuple[List[Dict[str, object]], Dict[str, object]]:
     try:
         with open(ledger_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except Exception:
-        return []
+        return [], {"rows_total": 0, "rows_in_window": 0, "excluded_flat": 0, "excluded_near_zero": 0}
 
     if isinstance(data, dict):
         rows = data.get("closed_trades", [])
@@ -53,6 +55,9 @@ def load_ledger_exits(ledger_path: str, since_ms: int) -> List[Dict[str, object]
         rows = []
 
     trades: List[Dict[str, object]] = []
+    excluded_flat = 0
+    excluded_near_zero = 0
+    rows_in_window = 0
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -65,6 +70,7 @@ def load_ledger_exits(ledger_path: str, since_ms: int) -> List[Dict[str, object]
             continue
         if ts_ms < since_ms:
             continue
+        rows_in_window += 1
 
         pnl = row.get("realized_pnl")
         if pnl is None:
@@ -81,17 +87,31 @@ def load_ledger_exits(ledger_path: str, since_ms: int) -> List[Dict[str, object]
         if not pnl_is_net:
             pnl_float -= fees_float
 
+        exit_reason = str(row.get("close_reason") or "UNKNOWN")
+        if not include_flat and exit_reason.strip().lower() == "exchange_flat_detected":
+            excluded_flat += 1
+            continue
+        if min_abs_pnl and abs(pnl_float) < float(min_abs_pnl):
+            excluded_near_zero += 1
+            continue
+
         trades.append(
             {
                 "ts_ms": ts_ms,
                 "symbol": str(row.get("symbol") or "unknown").lower(),
                 "entry_reason": normalize_reason(row.get("entry_reason")),
-                "exit_reason": str(row.get("close_reason") or "UNKNOWN"),
+                "exit_reason": exit_reason,
                 "regime": str(row.get("entry_regime") or "unknown"),
                 "pnl": pnl_float,
             }
         )
-    return trades
+    meta = {
+        "rows_total": len(rows),
+        "rows_in_window": rows_in_window,
+        "excluded_flat": excluded_flat,
+        "excluded_near_zero": excluded_near_zero,
+    }
+    return trades, meta
 
 
 def load_contexts(conn: sqlite3.Connection, since_ms: int) -> Tuple[Dict[Tuple[str, str], List[Tuple[int, str]]], Dict[str, List[Tuple[int, str]]]]:
@@ -306,7 +326,7 @@ def main() -> int:
         conn = None
 
     source = "ledger"
-    trades = load_ledger_exits(args.ledger, since_ms)
+    trades, ledger_meta = load_ledger_exits(args.ledger, since_ms, include_flat=args.include_flat, min_abs_pnl=args.min_abs_pnl)
     if not trades:
         source = "sqlite"
         if conn is not None:
@@ -319,6 +339,17 @@ def main() -> int:
             source = "journalctl-fallback"
     if conn is not None:
         conn.close()
+
+    if ledger_meta.get("rows_in_window", 0) > 0:
+        print(
+            "FILTER: excluded_flat={} excluded_near_zero={} eps={} include_flat={} (ledger_rows_in_window={})".format(
+                ledger_meta.get("excluded_flat", 0),
+                ledger_meta.get("excluded_near_zero", 0),
+                args.min_abs_pnl,
+                bool(args.include_flat),
+                ledger_meta.get("rows_in_window", 0),
+            )
+        )
 
     for trade in trades:
         regime_val = str(trade.get("regime") or "unknown").strip().lower()
