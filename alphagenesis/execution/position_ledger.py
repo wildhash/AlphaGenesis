@@ -64,6 +64,7 @@ class ClosedTrade:
     holding_seconds: float
     realized_pnl: float
     close_reason: str  # 'manual', 'sl_hit', 'tp_hit', 'exchange_flat_detected', 'liquidation'
+    entry_reason: str = "unknown"
     fees_estimated: float = 0.0
     mae: float = 0.0  # Max Adverse Excursion
     mfe: float = 0.0  # Max Favorable Excursion
@@ -265,6 +266,10 @@ class PositionLedger:
             logger.warning(f"Cannot open {side} on {symbol}: {reason}")
             return False
 
+        normalized_entry_reason = str(entry_reason).strip() if entry_reason is not None else ""
+        if not normalized_entry_reason:
+            normalized_entry_reason = "unknown"
+
         # Create position
         position_id = str(uuid.uuid4())
         self.positions[symbol] = Position(
@@ -276,7 +281,7 @@ class PositionLedger:
             position_id=position_id,
             client_order_id=client_order_id,
             order_id=order_id,
-            entry_reason=entry_reason,
+            entry_reason=normalized_entry_reason,
             last_update_ts=time.time(),
             last_exchange_sync_ts=time.time()
         )
@@ -290,7 +295,7 @@ class PositionLedger:
 
         self._save()
         logger.info(
-            f"✅ Opened {side} position on {symbol}: size={size}, price={entry_price}, id={position_id[:8]}, entry_reason={entry_reason}"
+            f"✅ Opened {side} position on {symbol}: size={size}, price={entry_price}, id={position_id[:8]}, entry_reason={normalized_entry_reason}"
         )
         return True
 
@@ -319,6 +324,9 @@ class PositionLedger:
         # Record closed trade
         close_time = time.time()
         holding_seconds = close_time - pos.open_time
+        normalized_entry_reason = str(pos.entry_reason).strip() if pos.entry_reason is not None else ""
+        if not normalized_entry_reason:
+            normalized_entry_reason = "unknown"
 
         closed_trade = ClosedTrade(
             position_id=pos.position_id,
@@ -332,10 +340,18 @@ class PositionLedger:
             holding_seconds=holding_seconds,
             realized_pnl=realized_pnl,
             close_reason=close_reason,
+            entry_reason=normalized_entry_reason,
             fees_estimated=fees_estimated
         )
 
         self.closed_trades.append(closed_trade)
+        logger.info(
+            "EXIT_ATTRIBUTION: symbol={} entry_reason={} exit_reason={} pnl={:.4f}",
+            symbol,
+            normalized_entry_reason,
+            close_reason,
+            realized_pnl,
+        )
 
         # Log closure
         logger.info(f"✅ Closed {pos.side} position on {symbol}: "
@@ -350,6 +366,7 @@ class PositionLedger:
             entry_price=0.0,
             open_time=0.0,
             position_id=str(uuid.uuid4()),
+            entry_reason="unknown",
             realized_pnl=realized_pnl,
             last_update_ts=close_time
         )

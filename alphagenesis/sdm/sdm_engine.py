@@ -17,8 +17,11 @@ Just continuous resolution under pressure.
 import os
 import time
 import signal
+import json
+import sqlite3
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
+from collections import defaultdict
 import numpy as np
 from loguru import logger
 
@@ -43,6 +46,209 @@ class AILogBusWithExitSummary:
                 age_val = None
             self._record_cb(reason, age_val)
         return self._base_bus.emit(stage, model, input_payload, output_payload, explanation, order_id=order_id, meta=meta)
+
+
+class LoserTupleKillSwitch:
+    """Auto-block weak (symbol, entry_reason, regime) tuples from recent realized exits."""
+
+    def __init__(
+        self,
+        db_path: str,
+        state_path: str,
+        lookback_hours: int = 24,
+        min_trades: int = 5,
+        min_win_rate: float = 0.35,
+        min_profit_factor: float = 0.80,
+        max_total_pnl: float = -20.0,
+        refresh_interval_seconds: int = 300,
+    ):
+        self.db_path = db_path
+        self.state_path = state_path
+        self.lookback_hours = max(1, int(lookback_hours))
+        self.min_trades = max(1, int(min_trades))
+        self.min_win_rate = float(min_win_rate)
+        self.min_profit_factor = float(min_profit_factor)
+        self.max_total_pnl = float(max_total_pnl)
+        self.refresh_interval_seconds = max(30, int(refresh_interval_seconds))
+        self.last_refresh_ts = 0.0
+        self.blocked_tuples: Dict[str, Dict[str, Any]] = {}
+        self._load_state()
+
+    def _normalize_reason(self, value: Any) -> str:
+        if value is None:
+            return "LEGACY_NONE"
+        reason = str(value).strip()
+        return reason if reason else "LEGACY_NONE"
+
+    def _normalize_regime(self, value: Any) -> str:
+        if value is None:
+            return "unknown"
+        regime = str(value).strip().lower()
+        return regime if regime else "unknown"
+
+    def _tuple_key(self, symbol: Any, entry_reason: Any, regime: Any) -> str:
+        symbol_norm = str(symbol or "unknown").strip().lower() or "unknown"
+        reason_norm = self._normalize_reason(entry_reason)
+        regime_norm = self._normalize_regime(regime)
+        return f"{symbol_norm}|{reason_norm}|{regime_norm}"
+
+    def _load_state(self) -> None:
+        try:
+            if not os.path.exists(self.state_path):
+                return
+            with open(self.state_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                blocked = data.get("blocked_tuples")
+                if isinstance(blocked, dict):
+                    self.blocked_tuples = blocked
+        except Exception as exc:
+            logger.warning("LOSER_KILL_SWITCH_STATE_LOAD_FAILED path={} err={}", self.state_path, exc)
+
+    def _save_state(self) -> None:
+        try:
+            tmp_path = f"{self.state_path}.tmp"
+            payload = {
+                "updated_at_ms": int(time.time() * 1000),
+                "blocked_tuples": self.blocked_tuples,
+            }
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=True, separators=(",", ":"))
+            os.replace(tmp_path, self.state_path)
+        except Exception as exc:
+            logger.warning("LOSER_KILL_SWITCH_STATE_SAVE_FAILED path={} err={}", self.state_path, exc)
+
+    def is_blocked(self, symbol: Any, entry_reason: Any, regime: Any) -> bool:
+        return self._tuple_key(symbol, entry_reason, regime) in self.blocked_tuples
+
+    def blocked_count(self) -> int:
+        return len(self.blocked_tuples)
+
+    def get_block_meta(self, symbol: Any, entry_reason: Any, regime: Any) -> Dict[str, Any]:
+        return self.blocked_tuples.get(self._tuple_key(symbol, entry_reason, regime), {})
+
+    def refresh(self, force: bool = False) -> int:
+        now = time.time()
+        if not force and (now - self.last_refresh_ts) < self.refresh_interval_seconds:
+            return 0
+        self.last_refresh_ts = now
+        if not os.path.exists(self.db_path):
+            logger.warning("LOSER_KILL_SWITCH_DB_MISSING path={}", self.db_path)
+            return 0
+
+        since_ms = int((now - (self.lookback_hours * 3600)) * 1000)
+        stats: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {
+                "n": 0,
+                "wins": 0,
+                "total_pnl": 0.0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
+                "symbol": "unknown",
+                "entry_reason": "LEGACY_NONE",
+                "regime": "unknown",
+            }
+        )
+        try:
+            conn = sqlite3.connect(self.db_path)
+            query = """
+                SELECT created_at_ms, payload_json
+                FROM ai_logs
+                WHERE status='done'
+                  AND stage='Exit Execution'
+                  AND created_at_ms >= ?
+            """
+            for _, payload_json in conn.execute(query, (since_ms,)):
+                try:
+                    payload = json.loads(payload_json)
+                except Exception:
+                    continue
+                inp = payload.get("input", {}) if isinstance(payload, dict) else {}
+                out = payload.get("output", {}) if isinstance(payload, dict) else {}
+                symbol = str(inp.get("symbol") or out.get("symbol") or "").lower().strip()
+                if not symbol:
+                    continue
+                entry_reason = inp.get("entry_reason") or out.get("entry_reason")
+                if entry_reason is None and isinstance(inp.get("entry_meta"), dict):
+                    entry_reason = inp.get("entry_meta", {}).get("entry_reason")
+                regime = (
+                    inp.get("regime")
+                    or out.get("regime")
+                    or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
+                )
+                pnl = out.get("realized_pnl")
+                if pnl is None:
+                    pnl = inp.get("realized_pnl")
+                if pnl is None:
+                    continue
+                try:
+                    pnl = float(pnl)
+                except (TypeError, ValueError):
+                    continue
+
+                reason_norm = self._normalize_reason(entry_reason)
+                regime_norm = self._normalize_regime(regime)
+                key = self._tuple_key(symbol, reason_norm, regime_norm)
+                st = stats[key]
+                st["symbol"] = symbol
+                st["entry_reason"] = reason_norm
+                st["regime"] = regime_norm
+                st["n"] += 1
+                st["total_pnl"] += pnl
+                if pnl > 0:
+                    st["wins"] += 1
+                    st["gross_profit"] += pnl
+                elif pnl < 0:
+                    st["gross_loss"] += abs(pnl)
+            conn.close()
+        except Exception as exc:
+            logger.warning("LOSER_KILL_SWITCH_REFRESH_FAILED err={}", exc)
+            return 0
+
+        new_blocks = 0
+        for key, st in stats.items():
+            n = int(st["n"])
+            if n < self.min_trades:
+                continue
+            win_rate = float(st["wins"]) / n if n else 0.0
+            gross_loss = float(st["gross_loss"])
+            if gross_loss > 0:
+                profit_factor = float(st["gross_profit"]) / gross_loss
+            elif float(st["gross_profit"]) > 0:
+                profit_factor = 999.0
+            else:
+                profit_factor = 0.0
+            total_pnl = float(st["total_pnl"])
+            should_block = (
+                win_rate < self.min_win_rate
+                or profit_factor < self.min_profit_factor
+                or total_pnl <= self.max_total_pnl
+            )
+            if should_block and key not in self.blocked_tuples:
+                block_meta = {
+                    "symbol": st["symbol"],
+                    "entry_reason": st["entry_reason"],
+                    "regime": st["regime"],
+                    "n": n,
+                    "win_rate": round(win_rate, 6),
+                    "profit_factor": round(profit_factor, 6),
+                    "total_pnl": round(total_pnl, 6),
+                    "blocked_at_ms": int(now * 1000),
+                }
+                self.blocked_tuples[key] = block_meta
+                new_blocks += 1
+                logger.error(
+                    "LOSER_TUPLE_BLOCKED tuple={} win_rate={:.1%} pf={:.2f} total_pnl={:.4f} n={}",
+                    key,
+                    win_rate,
+                    profit_factor,
+                    total_pnl,
+                    n,
+                )
+
+        if new_blocks > 0:
+            self._save_state()
+        return new_blocks
 
 
 # SDM Components
@@ -319,7 +525,8 @@ class SDMTradingEngine:
             for s in os.getenv("PROBE_OVERRIDE_ALLOWLIST", "cmt_bnbusdt,cmt_adausdt").split(",")
             if s.strip()
         }
-        self.probe_size_multiplier = max(0.05, min(1.0, float(os.getenv("PROBE_SIZE_MULTIPLIER", "0.5"))))
+        self.probe_size_multiplier = max(0.05, min(1.0, float(os.getenv("PROBE_SIZE_MULTIPLIER", "0.3"))))
+        logger.info("PROBE_SIZE_MULTIPLIER_ACTIVE value={:.3f}", self.probe_size_multiplier)
 
         # Champion tuple scaling (disabled by default).
         self.champion_tuple_enabled = os.getenv("CHAMPION_TUPLE_ENABLED", "false").lower() == "true"
@@ -333,6 +540,25 @@ class SDMTradingEngine:
             champion_size_parsed = 1.10
         self.champion_size_multiplier = max(1.10, min(1.15, champion_size_parsed))
         self._champion_tuple_warned_incomplete = False
+
+        self.loser_kill_switch_enabled = os.getenv("LOSER_KILL_SWITCH_ENABLED", "true").lower() == "true"
+        self.loser_kill_switch = LoserTupleKillSwitch(
+            db_path=os.getenv("AI_LOG_DB_PATH", "/opt/AlphaGenesis/tmp/ai_logs.sqlite"),
+            state_path=os.getenv("LOSER_TUPLE_BLOCKLIST_PATH", "/opt/AlphaGenesis/tmp/loser_tuple_blocklist.json"),
+            lookback_hours=int(os.getenv("LOSER_TUPLE_LOOKBACK_HOURS", "24")),
+            min_trades=int(os.getenv("LOSER_TUPLE_MIN_TRADES", "5")),
+            min_win_rate=float(os.getenv("LOSER_TUPLE_MIN_WIN_RATE", "0.35")),
+            min_profit_factor=float(os.getenv("LOSER_TUPLE_MIN_PROFIT_FACTOR", "0.80")),
+            max_total_pnl=float(os.getenv("LOSER_TUPLE_MAX_TOTAL_PNL", "-20.0")),
+            refresh_interval_seconds=int(os.getenv("LOSER_TUPLE_REFRESH_SECONDS", "300")),
+        )
+        if self.loser_kill_switch_enabled:
+            seeded = self.loser_kill_switch.refresh(force=True)
+            logger.warning(
+                "LOSER_KILL_SWITCH_ACTIVE blocked_total={} new_blocks={}",
+                self.loser_kill_switch.blocked_count(),
+                seeded,
+            )
 
         self.priority_symbols = list(self.tier_a_pairs)
         self.secondary_symbols = list(self.tier_b_pairs)
@@ -443,6 +669,15 @@ class SDMTradingEngine:
             try:
                 self.iteration += 1
                 timestamp = datetime.now()
+
+                if self.loser_kill_switch_enabled:
+                    new_blocks = self.loser_kill_switch.refresh()
+                    if new_blocks > 0:
+                        logger.warning(
+                            "LOSER_KILL_SWITCH_REFRESH new_blocks={} blocked_total={}",
+                            new_blocks,
+                            self.loser_kill_switch.blocked_count(),
+                        )
 
                 if self._diag_gate_log_every and self.iteration % self._diag_gate_log_every == 0:
                     counts = self._diag_gate_counts
@@ -1369,6 +1604,61 @@ class SDMTradingEngine:
                     )
                     continue
 
+                action_reason = proposed_action.get("reason")
+                if not action_reason and isinstance(proposed_action.get("entry_meta"), dict):
+                    action_reason = proposed_action.get("entry_meta", {}).get("entry_reason")
+                if not action_reason:
+                    action_reason = "LEGACY_NONE"
+                action_regime = proposed_action.get("regime")
+                if not action_regime:
+                    action_regime = regime.value if hasattr(regime, "value") else str(regime)
+
+                if self.loser_kill_switch_enabled and self.loser_kill_switch.is_blocked(symbol, action_reason, action_regime):
+                    block_meta = self.loser_kill_switch.get_block_meta(symbol, action_reason, action_regime)
+                    logger.error(
+                        "LOSER_TUPLE_BLOCKED_TRADE symbol={} entry_reason={} regime={} n={} win_rate={} pf={} total_pnl={}",
+                        symbol,
+                        action_reason,
+                        action_regime,
+                        block_meta.get("n"),
+                        block_meta.get("win_rate"),
+                        block_meta.get("profit_factor"),
+                        block_meta.get("total_pnl"),
+                    )
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": action_regime,
+                            "signal": action_reason,
+                            "entry_reason": action_reason,
+                            "confidence": proposed_action.get("confidence", 0.0),
+                            "straddle_active": False,
+                            "open_positions": open_positions,
+                            "capital": capital,
+                            "kill_switch": True,
+                            "kill_switch_meta": block_meta,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "LOSER_TUPLE_BLOCKED",
+                            "kill_switch_meta": block_meta,
+                        },
+                        explanation=(
+                            "HOLD: reason=LOSER_TUPLE_BLOCKED tuple={symbol}|{entry_reason}|{regime} "
+                            "metrics={meta}"
+                        ).format(
+                            symbol=symbol,
+                            entry_reason=action_reason,
+                            regime=action_regime,
+                            meta=block_meta,
+                        ),
+                    )
+                    continue
+
                 self._augment_action_with_risk_metrics(proposed_action)
 
                 # Evaluate action against intent graph
@@ -1640,6 +1930,8 @@ class SDMTradingEngine:
             tier_label = "C"
 
         signal_reason = signal.get('reason', '')
+        if not signal_reason:
+            signal_reason = "LEGACY_NONE"
         entry_meta = signal.get('entry_meta')
         if not isinstance(entry_meta, dict):
             entry_meta = {}
@@ -1680,6 +1972,11 @@ class SDMTradingEngine:
                 size_scale,
                 sorted(self.probe_override_allowlist),
             )
+
+        entry_meta.setdefault("entry_reason", signal_reason)
+        entry_meta.setdefault("symbol", symbol)
+        entry_meta.setdefault("regime", regime_str)
+        entry_meta.setdefault("probe_mode", probe_mode)
 
         champion_scale_applied = False
         champion_tuple_ready = bool(self.champion_symbol and self.champion_entry_reason and self.champion_regime)
@@ -2452,6 +2749,14 @@ class SDMTradingEngine:
                         entry_reason = entry_meta.get("entry_reason")
                     if not entry_reason:
                         entry_reason = action.get("reason")
+                if not entry_reason:
+                    logger.warning(
+                        "ATTRIBUTION_WARNING symbol={} stage=OrderExecution issue=missing_entry_reason fallback=unknown",
+                        symbol,
+                    )
+                    entry_reason = "unknown"
+                else:
+                    entry_reason = str(entry_reason).strip() or "unknown"
 
                 # Record in position ledger
                 position_recorded = self.position_ledger.open_position(

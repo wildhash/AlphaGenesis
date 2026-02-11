@@ -57,6 +57,7 @@ class BreakoutStraddleManager:
         self.normal_atr_pct = normal_atr_pct
         self.dry_run = dry_run
         self.ai_log_bus = ai_log_bus
+        self.probe_time_stop_seconds = max(300, int(os.getenv("PROBE_TIME_STOP_SECONDS", "900")))
         self._exit_ai_log_wired_emitted = False
         self.position_size_multiplier = 1.0
         self.last_daily_pnl = 0.0
@@ -241,9 +242,12 @@ class BreakoutStraddleManager:
         return ref
 
     def _log_exit_attribution(self, symbol: str, reason: str, state: Dict, exit_ref: Dict):
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
         entry_meta = state.get("entry_meta") or {}
+        entry_regime = self._extract_entry_regime(state)
         payload = {
-            "entry_reason": state.get("entry_reason"),
+            "entry_reason": entry_reason,
+            "regime": entry_regime,
             "entry_order_ids": state.get("entry_order_ids") or [],
             "exit_order_ids": state.get("exit_order_ids") or ([] if not exit_ref else [exit_ref]),
             "entry_meta": entry_meta,
@@ -261,11 +265,30 @@ class BreakoutStraddleManager:
             "AI_EXIT_LOG symbol={} exit_reason={} entry_reason={} entry_order_ids={} exit_order_ids={} payload={}",
             symbol,
             reason,
-            state.get("entry_reason"),
+            entry_reason,
             payload.get("entry_order_ids"),
             payload.get("exit_order_ids"),
             payload_json,
         )
+
+    def _normalize_entry_reason(self, entry_reason: Any) -> str:
+        if entry_reason is None:
+            return "LEGACY_NONE"
+        normalized = str(entry_reason).strip()
+        return normalized if normalized else "LEGACY_NONE"
+
+    def _extract_entry_regime(self, state: Dict) -> str:
+        if not isinstance(state, dict):
+            return "unknown"
+        entry_regime = state.get("entry_regime")
+        if entry_regime:
+            return str(entry_regime)
+        entry_meta = state.get("entry_meta")
+        if isinstance(entry_meta, dict):
+            regime = entry_meta.get("regime")
+            if regime:
+                return str(regime)
+        return "unknown"
 
     def _sanitize_payload(self, payload: Any) -> Any:
         try:
@@ -311,6 +334,20 @@ class BreakoutStraddleManager:
             return
         try:
             now = time.time()
+            state_ctx = self._get_state(symbol)
+            entry_reason = self._normalize_entry_reason(input_payload.get("entry_reason"))
+            if entry_reason == "LEGACY_NONE":
+                entry_reason = self._normalize_entry_reason(state_ctx.get("entry_reason"))
+            if entry_reason == "LEGACY_NONE" and stage.startswith("Exit"):
+                logger.warning(
+                    "ATTRIBUTION_WARNING symbol={} stage={} reason={} fallback_entry_reason=LEGACY_NONE",
+                    symbol,
+                    stage,
+                    reason,
+                )
+            regime = input_payload.get("regime")
+            if not regime:
+                regime = self._extract_entry_regime(state_ctx)
             entry_time = input_payload.get("entry_time")
             age_s = input_payload.get("age_s")
             if age_s is None and entry_time:
@@ -329,19 +366,23 @@ class BreakoutStraddleManager:
                 "exit_reason": reason,
                 "age_seconds": age_s,
                 "move_pct": move_pct,
-                "entry_reason": input_payload.get("entry_reason"),
+                "entry_reason": entry_reason,
+                "regime": regime,
                 "stop_tp_context": stop_tp_context,
             })
             output_payload = output_payload or {}
             output_payload.update({
                 "exit_reason": reason,
+                "entry_reason": entry_reason,
+                "regime": regime,
                 "age_seconds": age_s,
                 "move_pct": move_pct,
                 "stop_tp_context": stop_tp_context,
             })
             ctx = {
                 "state": input_payload.get("state"),
-                "entry_reason": input_payload.get("entry_reason"),
+                "entry_reason": entry_reason,
+                "regime": regime,
                 "entry_price": input_payload.get("entry_price"),
                 "last_price": input_payload.get("last_price"),
                 "size": input_payload.get("size"),
@@ -356,7 +397,7 @@ class BreakoutStraddleManager:
                 "stop={stop_loss} tp={take_profit}."
             ).format(
                 reason=reason,
-                entry_reason=input_payload.get("entry_reason"),
+                entry_reason=entry_reason,
                 age_s=age_s,
                 move_pct=move_pct,
                 stop_loss=input_payload.get("stop_loss"),
@@ -394,7 +435,8 @@ class BreakoutStraddleManager:
                 "state": state.get("state"),
                 "entry_price": state.get("entry_price"),
                 "last_price": state.get("last_price"),
-                "entry_reason": state.get("entry_reason"),
+                "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                "regime": self._extract_entry_regime(state),
                 "entry_meta": state.get("entry_meta"),
                 "entry_order_ids": state.get("entry_order_ids"),
             },
@@ -422,7 +464,8 @@ class BreakoutStraddleManager:
                 "state": state.get("state"),
                 "entry_price": state.get("entry_price"),
                 "last_price": state.get("last_price"),
-                "entry_reason": state.get("entry_reason"),
+                "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                "regime": self._extract_entry_regime(state),
                 "entry_meta": state.get("entry_meta"),
                 "entry_order_ids": state.get("entry_order_ids"),
             },
@@ -903,9 +946,10 @@ class BreakoutStraddleManager:
         state["state"] = self.STATE_HEDGED
         state["entry_price"] = price
         state["entry_time"] = now
-        state.setdefault("entry_reason", reason or "UNKNOWN")
+        state["entry_reason"] = self._normalize_entry_reason(reason or state.get("entry_reason") or "UNKNOWN")
         if entry_meta:
             state["entry_meta"] = entry_meta
+            state["entry_regime"] = entry_meta.get("regime")
         if entry_order_ids:
             state["entry_order_ids"] = entry_order_ids
         state["size"] = size
@@ -914,6 +958,16 @@ class BreakoutStraddleManager:
         state["trail_activation_pct"] = trail_activation
         state["trail_pct"] = trail_pct
         state["max_hold_seconds"] = max_hold
+        probe_mode = bool(entry_meta.get("probe_mode")) if isinstance(entry_meta, dict) else False
+        if state["entry_reason"] == "LOW_VOL_EXTREME_OVERRIDE" and probe_mode:
+            state["max_hold_seconds"] = min(state["max_hold_seconds"], self.probe_time_stop_seconds)
+            logger.info(
+                "PROBE_TIME_STOP_ACTIVE symbol={} entry_reason={} max_hold_seconds={} probe_size_multiplier={}",
+                symbol,
+                state["entry_reason"],
+                state["max_hold_seconds"],
+                entry_meta.get("probe_size_multiplier") if isinstance(entry_meta, dict) else None,
+            )
         state["atr_ratio"] = atr_ratio
         state["realized_pnl"] = 0.0
         state["pnl_applied"] = False
@@ -1028,6 +1082,18 @@ class BreakoutStraddleManager:
                     "HOLD_EXTENSION_ACTIVE symbol={} entry_reason={} max_hold_seconds={}",
                     symbol, entry_reason, max_hold_seconds
                 )
+            probe_mode = bool(state.get("entry_meta", {}).get("probe_mode")) if isinstance(state.get("entry_meta"), dict) else False
+            if entry_reason == "LOW_VOL_EXTREME_OVERRIDE" and probe_mode:
+                max_hold_seconds = min(max_hold_seconds, self.probe_time_stop_seconds)
+                if not state.get("probe_time_stop_logged"):
+                    logger.info(
+                        "PROBE_TIME_STOP_ACTIVE symbol={} entry_reason={} max_hold_seconds={} PROBE_SIZE_MULTIPLIER={}",
+                        symbol,
+                        entry_reason,
+                        max_hold_seconds,
+                        state.get("entry_meta", {}).get("probe_size_multiplier") if isinstance(state.get("entry_meta"), dict) else None,
+                    )
+                    state["probe_time_stop_logged"] = True
             elapsed = now - state["entry_time"]
             if elapsed >= max_hold_seconds:
                 entry_reason = state.get("entry_reason")
@@ -1063,7 +1129,35 @@ class BreakoutStraddleManager:
                     self._maybe_apply_compound(state)
                 return
 
-            if price >= state["entry_price"] * (1 + state["initial_stop_loss_pct"]):
+            base_stop_pct = float(state.get("initial_stop_loss_pct") or self.initial_stop_loss_pct)
+            effective_stop_pct = base_stop_pct
+            atr_ratio_live = None
+            try:
+                atr_ratio_live = float(self._atr_ratio(symbol, price))
+            except Exception as exc:
+                logger.warning("VOL_ADJUSTED_STOP_ATR_FETCH_FAILED symbol={} error={}", symbol, exc)
+
+            if atr_ratio_live is not None:
+                # Widen in low vol (avoid noise stops), tighten in high vol (risk containment).
+                if atr_ratio_live < 0.7:
+                    effective_stop_pct = base_stop_pct * 1.5
+                elif atr_ratio_live > 1.3:
+                    effective_stop_pct = base_stop_pct * 0.85
+
+            effective_stop_pct = max(0.006, min(0.02, effective_stop_pct))
+            state["effective_stop_loss_pct"] = effective_stop_pct
+            state["atr_ratio_live"] = atr_ratio_live
+            if (now - float(state.get("last_stop_log_ts", 0.0) or 0.0)) >= 60.0:
+                logger.info(
+                    "VOL_ADJUSTED_STOP symbol={} base_stop_pct={:.4f} effective_stop_pct={:.4f} atr_ratio={}",
+                    symbol,
+                    base_stop_pct,
+                    effective_stop_pct,
+                    f"{atr_ratio_live:.3f}" if atr_ratio_live is not None else "NA"
+                )
+                state["last_stop_log_ts"] = now
+
+            if price >= state["entry_price"] * (1 + effective_stop_pct):
                 entry_reason = state.get("entry_reason")
                 entry_time = state.get("entry_time")
                 entry_price = state.get("entry_price")
@@ -1085,6 +1179,9 @@ class BreakoutStraddleManager:
                             "entry_price": state.get("entry_price"),
                             "last_price": price,
                             "size": state.get("size"),
+                            "base_stop_loss_pct": base_stop_pct,
+                            "effective_stop_loss_pct": effective_stop_pct,
+                            "atr_ratio_live": atr_ratio_live,
                         },
                         output_payload={"action": "close_short"},
                     )
@@ -1097,7 +1194,7 @@ class BreakoutStraddleManager:
                     self._mark_action(state, now)
                 return
 
-            if price <= state["entry_price"] * (1 - state["initial_stop_loss_pct"]):
+            if price <= state["entry_price"] * (1 - effective_stop_pct):
                 entry_reason = state.get("entry_reason")
                 entry_time = state.get("entry_time")
                 entry_price = state.get("entry_price")
@@ -1119,6 +1216,9 @@ class BreakoutStraddleManager:
                             "entry_price": state.get("entry_price"),
                             "last_price": price,
                             "size": state.get("size"),
+                            "base_stop_loss_pct": base_stop_pct,
+                            "effective_stop_loss_pct": effective_stop_pct,
+                            "atr_ratio_live": atr_ratio_live,
                         },
                         output_payload={"action": "close_long"},
                     )

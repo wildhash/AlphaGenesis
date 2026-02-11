@@ -167,6 +167,10 @@ class MomentumHybridEngine:
                         "SOFT_GATE_BLOCKED symbol={} reason=override_loss_leader",
                         symbol
                     )
+                    logger.warning(
+                        "SOFT_GATE_BLOCKED_HARD symbol={} entry_reason=LOW_VOL_EXTREME_OVERRIDE reason=permanent_eth_sol_block",
+                        symbol,
+                    )
                     return "no_signal"
                 probe_override_symbols = {
                     s.strip().lower()
@@ -177,7 +181,7 @@ class MomentumHybridEngine:
                     if s.strip()
                 }
                 probe_mode_enabled = os.getenv("PROBE_MODE_ENABLED", "true").lower() == "true"
-                probe_size_multiplier_raw = os.getenv("PROBE_SIZE_MULTIPLIER", "0.5")
+                probe_size_multiplier_raw = os.getenv("PROBE_SIZE_MULTIPLIER", "0.3")
                 try:
                     probe_size_multiplier = float(probe_size_multiplier_raw)
                 except (TypeError, ValueError):
