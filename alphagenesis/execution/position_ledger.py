@@ -37,6 +37,7 @@ class Position:
     client_order_id: Optional[str] = None
     order_id: Optional[str] = None
     entry_reason: Optional[str] = None
+    entry_regime: Optional[str] = None
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
     last_update_ts: float = 0.0
@@ -65,7 +66,9 @@ class ClosedTrade:
     realized_pnl: float
     close_reason: str  # 'manual', 'sl_hit', 'tp_hit', 'exchange_flat_detected', 'liquidation'
     entry_reason: str = "unknown"
+    entry_regime: str = "unknown"
     fees_estimated: float = 0.0
+    pnl_is_net: bool = False
     mae: float = 0.0  # Max Adverse Excursion
     mfe: float = 0.0  # Max Favorable Excursion
 
@@ -247,7 +250,8 @@ class PositionLedger:
         entry_price: float,
         client_order_id: Optional[str] = None,
         order_id: Optional[str] = None,
-        entry_reason: Optional[str] = None
+        entry_reason: Optional[str] = None,
+        entry_regime: Optional[str] = None,
     ) -> bool:
         """
         Open new position (idempotent if same client_order_id).
@@ -269,6 +273,9 @@ class PositionLedger:
         normalized_entry_reason = str(entry_reason).strip() if entry_reason is not None else ""
         if not normalized_entry_reason:
             normalized_entry_reason = "unknown"
+        normalized_entry_regime = str(entry_regime).strip().lower() if entry_regime is not None else ""
+        if not normalized_entry_regime:
+            normalized_entry_regime = "unknown"
 
         # Create position
         position_id = str(uuid.uuid4())
@@ -282,6 +289,7 @@ class PositionLedger:
             client_order_id=client_order_id,
             order_id=order_id,
             entry_reason=normalized_entry_reason,
+            entry_regime=normalized_entry_regime,
             last_update_ts=time.time(),
             last_exchange_sync_ts=time.time()
         )
@@ -327,6 +335,9 @@ class PositionLedger:
         normalized_entry_reason = str(pos.entry_reason).strip() if pos.entry_reason is not None else ""
         if not normalized_entry_reason:
             normalized_entry_reason = "unknown"
+        normalized_entry_regime = str(pos.entry_regime).strip().lower() if pos.entry_regime is not None else ""
+        if not normalized_entry_regime:
+            normalized_entry_regime = "unknown"
 
         closed_trade = ClosedTrade(
             position_id=pos.position_id,
@@ -341,7 +352,9 @@ class PositionLedger:
             realized_pnl=realized_pnl,
             close_reason=close_reason,
             entry_reason=normalized_entry_reason,
-            fees_estimated=fees_estimated
+            entry_regime=normalized_entry_regime,
+            fees_estimated=fees_estimated,
+            pnl_is_net=False,
         )
 
         self.closed_trades.append(closed_trade)
@@ -367,6 +380,7 @@ class PositionLedger:
             open_time=0.0,
             position_id=str(uuid.uuid4()),
             entry_reason="unknown",
+            entry_regime="unknown",
             realized_pnl=realized_pnl,
             last_update_ts=close_time
         )
@@ -517,6 +531,82 @@ class PositionLedger:
     def get_closed_trades(self, limit: int = 100) -> List[ClosedTrade]:
         """Get recent closed trades for analysis."""
         return self.closed_trades[-limit:]
+
+    def get_recent_closed_trades(self, hours: int = 24, limit: int = 1000) -> List[ClosedTrade]:
+        """Get closed trades in a rolling lookback window."""
+        window_hours = max(1, int(hours))
+        cutoff_ts = time.time() - (window_hours * 3600)
+        recent = [trade for trade in self.closed_trades if float(trade.close_time) >= cutoff_ts]
+        if limit > 0:
+            return recent[-int(limit):]
+        return recent
+
+    def record_closed_trade(
+        self,
+        symbol: str,
+        side: PositionSide,
+        size: float,
+        entry_price: float,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        entry_reason: Optional[str] = None,
+        entry_regime: Optional[str] = None,
+        fees_estimated: float = 0.0,
+        pnl_is_net: bool = False,
+        open_time: Optional[float] = None,
+        close_time: Optional[float] = None,
+        position_id: Optional[str] = None,
+    ) -> bool:
+        """Append an externally-resolved close event (e.g. straddle lifecycle)."""
+        close_ts = float(close_time) if close_time is not None else time.time()
+        open_ts = float(open_time) if open_time is not None else close_ts
+        if open_ts > close_ts:
+            open_ts = close_ts
+        if side not in ("LONG", "SHORT", "FLAT"):
+            side = "LONG"
+        pos_id = position_id or str(uuid.uuid4())
+        if any(existing.position_id == pos_id for existing in self.closed_trades[-self.max_closed_trades:]):
+            logger.debug("Skipping duplicate closed trade record position_id={}", pos_id)
+            return False
+
+        normalized_entry_reason = str(entry_reason).strip() if entry_reason is not None else ""
+        if not normalized_entry_reason:
+            normalized_entry_reason = "unknown"
+        normalized_entry_regime = str(entry_regime).strip().lower() if entry_regime is not None else ""
+        if not normalized_entry_regime:
+            normalized_entry_regime = "unknown"
+
+        holding_seconds = max(0.0, close_ts - open_ts)
+        closed_trade = ClosedTrade(
+            position_id=pos_id,
+            symbol=symbol,
+            side=side,
+            size=float(size),
+            entry_price=float(entry_price),
+            close_price=float(close_price),
+            open_time=open_ts,
+            close_time=close_ts,
+            holding_seconds=holding_seconds,
+            realized_pnl=float(realized_pnl),
+            close_reason=str(close_reason or "manual"),
+            entry_reason=normalized_entry_reason,
+            entry_regime=normalized_entry_regime,
+            fees_estimated=float(fees_estimated or 0.0),
+            pnl_is_net=bool(pnl_is_net),
+        )
+        self.closed_trades.append(closed_trade)
+        self._save(force=True)
+        logger.info(
+            "LEDGER_CLOSED_TRADE_RECORDED symbol={} entry_reason={} regime={} exit_reason={} pnl={:.4f} pnl_is_net={}",
+            symbol,
+            normalized_entry_reason,
+            normalized_entry_regime,
+            close_reason,
+            float(realized_pnl),
+            bool(pnl_is_net),
+        )
+        return True
 
     def export_closed_trades_csv(self, path: str):
         """Export closed trades to CSV for learning."""

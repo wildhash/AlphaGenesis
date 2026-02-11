@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate edge report from AI logs")
     parser.add_argument("--hours", type=int, default=4, help="Lookback window in hours")
     parser.add_argument("--db", default="/opt/AlphaGenesis/tmp/ai_logs.sqlite", help="Path to ai_logs sqlite")
+    parser.add_argument("--ledger", default="/opt/AlphaGenesis/tmp/position_ledger.json", help="Path to position ledger json")
     parser.add_argument("--service", default="sdm-trading.service", help="systemd service name")
     return parser.parse_args()
 
@@ -35,6 +36,62 @@ def normalize_reason(value: Optional[str]) -> str:
         return "None"
     value_s = str(value).strip()
     return value_s if value_s else "None"
+
+
+def load_ledger_exits(ledger_path: str, since_ms: int) -> List[Dict[str, object]]:
+    try:
+        with open(ledger_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return []
+
+    if isinstance(data, dict):
+        rows = data.get("closed_trades", [])
+    elif isinstance(data, list):
+        rows = data
+    else:
+        rows = []
+
+    trades: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        close_time = row.get("close_time")
+        if close_time is None:
+            continue
+        try:
+            ts_ms = int(float(close_time) * 1000)
+        except (TypeError, ValueError):
+            continue
+        if ts_ms < since_ms:
+            continue
+
+        pnl = row.get("realized_pnl")
+        if pnl is None:
+            continue
+        try:
+            pnl_float = float(pnl)
+        except (TypeError, ValueError):
+            continue
+        try:
+            fees_float = float(row.get("fees_estimated", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            fees_float = 0.0
+        pnl_is_net = bool(row.get("pnl_is_net", False))
+        if not pnl_is_net:
+            pnl_float -= fees_float
+
+        trades.append(
+            {
+                "ts_ms": ts_ms,
+                "symbol": str(row.get("symbol") or "unknown").lower(),
+                "entry_reason": normalize_reason(row.get("entry_reason")),
+                "exit_reason": str(row.get("close_reason") or "UNKNOWN"),
+                "regime": str(row.get("entry_regime") or "unknown"),
+                "pnl": pnl_float,
+            }
+        )
+    return trades
 
 
 def load_contexts(conn: sqlite3.Connection, since_ms: int) -> Tuple[Dict[Tuple[str, str], List[Tuple[int, str]]], Dict[str, List[Tuple[int, str]]]]:
@@ -239,26 +296,42 @@ def main() -> int:
     now_ms = int(time.time() * 1000)
     since_ms = now_ms - int(args.hours * 3600 * 1000)
 
-    conn = sqlite3.connect(args.db)
-    by_key, by_symbol = load_contexts(conn, since_ms)
-
-    source = "sqlite"
+    conn = None
+    by_key: Dict[Tuple[str, str], List[Tuple[int, str]]] = defaultdict(list)
+    by_symbol: Dict[str, List[Tuple[int, str]]] = defaultdict(list)
     try:
-        trades = fallback_sqlite_exits(conn, since_ms)
+        conn = sqlite3.connect(args.db)
+        by_key, by_symbol = load_contexts(conn, since_ms)
     except sqlite3.Error:
-        trades = []
+        conn = None
+
+    source = "ledger"
+    trades = load_ledger_exits(args.ledger, since_ms)
     if not trades:
-        trades = parse_ai_exit_logs(args.hours, args.service)
-        source = "journalctl-fallback"
+        source = "sqlite"
+        if conn is not None:
+            try:
+                trades = fallback_sqlite_exits(conn, since_ms)
+            except sqlite3.Error:
+                trades = []
+        if not trades:
+            trades = parse_ai_exit_logs(args.hours, args.service)
+            source = "journalctl-fallback"
+    if conn is not None:
+        conn.close()
 
     for trade in trades:
-        trade["regime"] = resolve_regime(
-            symbol=str(trade["symbol"]),
-            reason=str(trade["entry_reason"]),
-            ts_ms=trade.get("ts_ms"),
-            by_key=by_key,
-            by_symbol=by_symbol,
-        )
+        regime_val = str(trade.get("regime") or "unknown").strip().lower()
+        if regime_val in {"", "unknown", "none"}:
+            trade["regime"] = resolve_regime(
+                symbol=str(trade["symbol"]),
+                reason=str(trade["entry_reason"]),
+                ts_ms=trade.get("ts_ms"),
+                by_key=by_key,
+                by_symbol=by_symbol,
+            )
+        else:
+            trade["regime"] = regime_val
 
     print(f"=== EDGE REPORT ({args.hours}h) source={source} ===")
     if not trades:

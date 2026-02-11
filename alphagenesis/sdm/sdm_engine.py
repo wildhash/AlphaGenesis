@@ -127,16 +127,136 @@ class LoserTupleKillSwitch:
     def get_block_meta(self, symbol: Any, entry_reason: Any, regime: Any) -> Dict[str, Any]:
         return self.blocked_tuples.get(self._tuple_key(symbol, entry_reason, regime), {})
 
-    def refresh(self, force: bool = False) -> int:
+    def _accumulate_trade(self, stats: Dict[str, Dict[str, Any]], symbol: Any, entry_reason: Any, regime: Any, pnl: float) -> None:
+        symbol_norm = str(symbol or "").lower().strip()
+        if not symbol_norm:
+            return
+        reason_norm = self._normalize_reason(entry_reason)
+        regime_norm = self._normalize_regime(regime)
+        key = self._tuple_key(symbol_norm, reason_norm, regime_norm)
+        st = stats[key]
+        st["symbol"] = symbol_norm
+        st["entry_reason"] = reason_norm
+        st["regime"] = regime_norm
+        st["n"] += 1
+        st["total_pnl"] += pnl
+        if pnl > 0:
+            st["wins"] += 1
+            st["gross_profit"] += pnl
+        elif pnl < 0:
+            st["gross_loss"] += abs(pnl)
+
+    def _obj_get(self, obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _ingest_from_ledger(
+        self,
+        position_ledger: Any,
+        cutoff_ts: float,
+        stats: Dict[str, Dict[str, Any]],
+    ) -> tuple[int, int, int]:
+        total_rows = 0
+        used_rows = 0
+        skipped_no_pnl = 0
+        try:
+            if hasattr(position_ledger, "get_recent_closed_trades"):
+                trades = position_ledger.get_recent_closed_trades(hours=self.lookback_hours, limit=5000)
+            elif hasattr(position_ledger, "get_closed_trades"):
+                trades = position_ledger.get_closed_trades(limit=5000)
+            else:
+                return total_rows, used_rows, skipped_no_pnl
+        except Exception as exc:
+            logger.warning("LOSER_KILL_SWITCH_LEDGER_READ_FAILED err={}", exc)
+            return total_rows, used_rows, skipped_no_pnl
+
+        for trade in trades:
+            total_rows += 1
+            close_time = self._obj_get(trade, "close_time")
+            try:
+                if close_time is not None and float(close_time) < cutoff_ts:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+            symbol = self._obj_get(trade, "symbol")
+            entry_reason = self._obj_get(trade, "entry_reason")
+            regime = self._obj_get(trade, "entry_regime")
+            pnl_value = self._obj_get(trade, "realized_pnl")
+            fees_estimated = self._obj_get(trade, "fees_estimated", 0.0)
+            pnl_is_net = bool(self._obj_get(trade, "pnl_is_net", False))
+            if pnl_value is None:
+                skipped_no_pnl += 1
+                continue
+            try:
+                pnl_float = float(pnl_value)
+            except (TypeError, ValueError):
+                skipped_no_pnl += 1
+                continue
+            try:
+                fees_float = float(fees_estimated or 0.0)
+            except (TypeError, ValueError):
+                fees_float = 0.0
+            if not pnl_is_net:
+                pnl_float -= fees_float
+            self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
+            used_rows += 1
+        return total_rows, used_rows, skipped_no_pnl
+
+    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> tuple[int, int, int]:
+        total_rows = 0
+        used_rows = 0
+        skipped_no_pnl = 0
+        conn = sqlite3.connect(self.db_path)
+        query = """
+            SELECT created_at_ms, payload_json
+            FROM ai_logs
+            WHERE status='done'
+              AND stage='Exit Execution'
+              AND created_at_ms >= ?
+        """
+        for _, payload_json in conn.execute(query, (since_ms,)):
+            total_rows += 1
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                continue
+            inp = payload.get("input", {}) if isinstance(payload, dict) else {}
+            out = payload.get("output", {}) if isinstance(payload, dict) else {}
+            symbol = inp.get("symbol") or out.get("symbol")
+            entry_reason = inp.get("entry_reason") or out.get("entry_reason")
+            if entry_reason is None and isinstance(inp.get("entry_meta"), dict):
+                entry_reason = inp.get("entry_meta", {}).get("entry_reason")
+            regime = (
+                inp.get("regime")
+                or out.get("regime")
+                or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
+            )
+            pnl = out.get("realized_pnl")
+            if pnl is None:
+                pnl = inp.get("realized_pnl")
+            if pnl is None:
+                skipped_no_pnl += 1
+                continue
+            try:
+                pnl_float = float(pnl)
+            except (TypeError, ValueError):
+                skipped_no_pnl += 1
+                continue
+            self._accumulate_trade(stats, symbol, entry_reason, regime, pnl_float)
+            used_rows += 1
+        conn.close()
+        return total_rows, used_rows, skipped_no_pnl
+
+    def refresh(self, force: bool = False, position_ledger: Optional[Any] = None) -> int:
         now = time.time()
         if not force and (now - self.last_refresh_ts) < self.refresh_interval_seconds:
             return 0
         self.last_refresh_ts = now
-        if not os.path.exists(self.db_path):
-            logger.warning("LOSER_KILL_SWITCH_DB_MISSING path={}", self.db_path)
-            return 0
 
         since_ms = int((now - (self.lookback_hours * 3600)) * 1000)
+        cutoff_ts = now - (self.lookback_hours * 3600)
         stats: Dict[str, Dict[str, Any]] = defaultdict(
             lambda: {
                 "n": 0,
@@ -149,58 +269,34 @@ class LoserTupleKillSwitch:
                 "regime": "unknown",
             }
         )
-        try:
-            conn = sqlite3.connect(self.db_path)
-            query = """
-                SELECT created_at_ms, payload_json
-                FROM ai_logs
-                WHERE status='done'
-                  AND stage='Exit Execution'
-                  AND created_at_ms >= ?
-            """
-            for _, payload_json in conn.execute(query, (since_ms,)):
-                try:
-                    payload = json.loads(payload_json)
-                except Exception:
-                    continue
-                inp = payload.get("input", {}) if isinstance(payload, dict) else {}
-                out = payload.get("output", {}) if isinstance(payload, dict) else {}
-                symbol = str(inp.get("symbol") or out.get("symbol") or "").lower().strip()
-                if not symbol:
-                    continue
-                entry_reason = inp.get("entry_reason") or out.get("entry_reason")
-                if entry_reason is None and isinstance(inp.get("entry_meta"), dict):
-                    entry_reason = inp.get("entry_meta", {}).get("entry_reason")
-                regime = (
-                    inp.get("regime")
-                    or out.get("regime")
-                    or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
-                )
-                pnl = out.get("realized_pnl")
-                if pnl is None:
-                    pnl = inp.get("realized_pnl")
-                if pnl is None:
-                    continue
-                try:
-                    pnl = float(pnl)
-                except (TypeError, ValueError):
-                    continue
 
-                reason_norm = self._normalize_reason(entry_reason)
-                regime_norm = self._normalize_regime(regime)
-                key = self._tuple_key(symbol, reason_norm, regime_norm)
-                st = stats[key]
-                st["symbol"] = symbol
-                st["entry_reason"] = reason_norm
-                st["regime"] = regime_norm
-                st["n"] += 1
-                st["total_pnl"] += pnl
-                if pnl > 0:
-                    st["wins"] += 1
-                    st["gross_profit"] += pnl
-                elif pnl < 0:
-                    st["gross_loss"] += abs(pnl)
-            conn.close()
+        try:
+            total_rows = 0
+            used_rows = 0
+            skipped_no_pnl = 0
+
+            if position_ledger is not None:
+                total_rows, used_rows, skipped_no_pnl = self._ingest_from_ledger(position_ledger, cutoff_ts, stats)
+                logger.info(
+                    "LOSER_KILL_SWITCH_INGEST source=ledger rows_total={} rows_used={} skipped_no_pnl={} lookback_h={}",
+                    total_rows,
+                    used_rows,
+                    skipped_no_pnl,
+                    self.lookback_hours,
+                )
+
+            if used_rows == 0:
+                if not os.path.exists(self.db_path):
+                    logger.warning("LOSER_KILL_SWITCH_DB_MISSING path={}", self.db_path)
+                else:
+                    total_rows, used_rows, skipped_no_pnl = self._ingest_from_ai_logs(since_ms, stats)
+                    logger.info(
+                        "LOSER_KILL_SWITCH_INGEST source=ai_logs rows_total={} rows_used={} skipped_no_pnl={} lookback_h={}",
+                        total_rows,
+                        used_rows,
+                        skipped_no_pnl,
+                        self.lookback_hours,
+                    )
         except Exception as exc:
             logger.warning("LOSER_KILL_SWITCH_REFRESH_FAILED err={}", exc)
             return 0
@@ -219,10 +315,14 @@ class LoserTupleKillSwitch:
             else:
                 profit_factor = 0.0
             total_pnl = float(st["total_pnl"])
+            has_loss_evidence = gross_loss > 0.0 or total_pnl < 0.0
             should_block = (
-                win_rate < self.min_win_rate
-                or profit_factor < self.min_profit_factor
-                or total_pnl <= self.max_total_pnl
+                has_loss_evidence
+                and (
+                    win_rate < self.min_win_rate
+                    or profit_factor < self.min_profit_factor
+                    or total_pnl <= self.max_total_pnl
+                )
             )
             if should_block and key not in self.blocked_tuples:
                 block_meta = {
@@ -553,7 +653,7 @@ class SDMTradingEngine:
             refresh_interval_seconds=int(os.getenv("LOSER_TUPLE_REFRESH_SECONDS", "300")),
         )
         if self.loser_kill_switch_enabled:
-            seeded = self.loser_kill_switch.refresh(force=True)
+            seeded = self.loser_kill_switch.refresh(force=True, position_ledger=self.position_ledger)
             logger.warning(
                 "LOSER_KILL_SWITCH_ACTIVE blocked_total={} new_blocks={}",
                 self.loser_kill_switch.blocked_count(),
@@ -671,7 +771,7 @@ class SDMTradingEngine:
                 timestamp = datetime.now()
 
                 if self.loser_kill_switch_enabled:
-                    new_blocks = self.loser_kill_switch.refresh()
+                    new_blocks = self.loser_kill_switch.refresh(position_ledger=self.position_ledger)
                     if new_blocks > 0:
                         logger.warning(
                             "LOSER_KILL_SWITCH_REFRESH new_blocks={} blocked_total={}",
@@ -2757,6 +2857,17 @@ class SDMTradingEngine:
                     entry_reason = "unknown"
                 else:
                     entry_reason = str(entry_reason).strip() or "unknown"
+                entry_regime = None
+                if isinstance(action, dict):
+                    entry_meta = action.get("entry_meta")
+                    if isinstance(entry_meta, dict):
+                        entry_regime = entry_meta.get("regime")
+                    if not entry_regime:
+                        entry_regime = action.get("regime")
+                if not entry_regime:
+                    entry_regime = "unknown"
+                else:
+                    entry_regime = str(entry_regime).strip().lower() or "unknown"
 
                 # Record in position ledger
                 position_recorded = self.position_ledger.open_position(
@@ -2766,7 +2877,8 @@ class SDMTradingEngine:
                     entry_price=action['entry_price'],
                     client_order_id=client_order_id,
                     order_id=order_id,
-                    entry_reason=entry_reason
+                    entry_reason=entry_reason,
+                    entry_regime=entry_regime,
                 )
 
                 if not position_recorded:

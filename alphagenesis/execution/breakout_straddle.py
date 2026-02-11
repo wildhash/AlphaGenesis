@@ -58,6 +58,7 @@ class BreakoutStraddleManager:
         self.dry_run = dry_run
         self.ai_log_bus = ai_log_bus
         self.probe_time_stop_seconds = max(300, int(os.getenv("PROBE_TIME_STOP_SECONDS", "900")))
+        self.estimated_taker_fee_rate = max(0.0, float(os.getenv("ESTIMATED_TAKER_FEE_RATE", "0.0006")))
         self._exit_ai_log_wired_emitted = False
         self.position_size_multiplier = 1.0
         self.last_daily_pnl = 0.0
@@ -86,6 +87,7 @@ class BreakoutStraddleManager:
 
     def _get_state(self, symbol: str) -> Dict:
         return self._states.setdefault(symbol, {
+            "symbol": symbol,
             "state": self.STATE_IDLE,
             "entry_price": 0.0,
             "entry_time": 0.0,
@@ -97,6 +99,8 @@ class BreakoutStraddleManager:
             "max_hold_seconds": self.max_hold_seconds,
             "atr_ratio": 1.0,
             "realized_pnl": 0.0,
+            "realized_pnl_net": 0.0,
+            "fees_estimated_total": 0.0,
             "pnl_applied": False,
             "peak_price": 0.0,
             "trough_price": 0.0,
@@ -108,6 +112,9 @@ class BreakoutStraddleManager:
             "reconcile_checked": False,
             "long_size": 0.0,
             "short_size": 0.0,
+            "last_exit_reason": "unknown",
+            "closed_trade_recorded": False,
+            "runner_side": "LONG",
         })
 
     def _reset_if_ready(self, state: Dict, now: float):
@@ -173,6 +180,7 @@ class BreakoutStraddleManager:
         now_ts = time.time()
 
         state["state"] = runner_state
+        state["runner_side"] = side
         state["entry_price"] = entry_price
         state["entry_time"] = entry_time or now_ts
         state["size"] = size
@@ -254,6 +262,8 @@ class BreakoutStraddleManager:
             "entry_price": state.get("entry_price"),
             "last_price": state.get("last_price"),
             "realized_pnl": state.get("realized_pnl"),
+            "realized_pnl_net": state.get("realized_pnl_net"),
+            "fees_estimated_total": state.get("fees_estimated_total"),
         }
         payload = self._sanitize_payload(payload)
         try:
@@ -289,6 +299,67 @@ class BreakoutStraddleManager:
             if regime:
                 return str(regime)
         return "unknown"
+
+    def _estimate_close_fee(self, size: float, price: float) -> float:
+        if size is None or price is None:
+            return 0.0
+        try:
+            return abs(float(size)) * abs(float(price)) * self.estimated_taker_fee_rate
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _refresh_realized_pnl_snapshot(self, state: Dict) -> Tuple[float, float, float]:
+        realized_gross = float(state.get("realized_pnl") or 0.0)
+        fees_total = float(state.get("fees_estimated_total") or 0.0)
+        realized_net = realized_gross - fees_total
+        state["realized_pnl_net"] = realized_net
+        return realized_gross, fees_total, realized_net
+
+    def _record_closed_trade_for_ledger(self, state: Dict) -> None:
+        if not self.position_ledger:
+            return
+        if state.get("closed_trade_recorded"):
+            return
+        symbol = state.get("symbol")
+        if not symbol:
+            return
+        entry_price = float(state.get("entry_price") or 0.0)
+        close_price = float(state.get("last_price") or entry_price or 0.0)
+        size = float(state.get("size") or 0.0)
+        entry_time = float(state.get("entry_time") or 0.0)
+        close_time = float(state.get("last_update_ts") or time.time())
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
+        entry_regime = self._extract_entry_regime(state)
+        close_reason = str(state.get("last_exit_reason") or "unknown")
+        side = str(state.get("runner_side") or "LONG").upper()
+        if side not in ("LONG", "SHORT"):
+            side = "LONG"
+        _, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        try:
+            self.position_ledger.record_closed_trade(
+                symbol=symbol,
+                side=side,
+                size=size,
+                entry_price=entry_price,
+                close_price=close_price,
+                realized_pnl=realized_net,
+                close_reason=close_reason,
+                entry_reason=entry_reason,
+                entry_regime=entry_regime,
+                fees_estimated=fees_total,
+                pnl_is_net=True,
+                open_time=entry_time,
+                close_time=close_time,
+                position_id=f"straddle:{symbol}:{int(entry_time * 1000)}:{entry_reason}",
+            )
+            state["closed_trade_recorded"] = True
+        except Exception as exc:
+            logger.warning(
+                "STRADDLE_LEDGER_RECORD_FAILED symbol={} reason={} err={}",
+                symbol,
+                close_reason,
+                exc,
+            )
 
     def _sanitize_payload(self, payload: Any) -> Any:
         try:
@@ -357,6 +428,17 @@ class BreakoutStraddleManager:
             move_pct = input_payload.get("move_pct")
             if move_pct is None and entry_price and last_price:
                 move_pct = abs(last_price - entry_price) / entry_price * 100.0
+            realized_pnl = input_payload.get("realized_pnl")
+            if realized_pnl is None:
+                realized_pnl = state_ctx.get("realized_pnl_net")
+            if realized_pnl is None:
+                realized_pnl = state_ctx.get("realized_pnl")
+            fees_estimated = input_payload.get("fees_estimated")
+            if fees_estimated is None:
+                fees_estimated = state_ctx.get("fees_estimated_total")
+            realized_pnl_gross = input_payload.get("realized_pnl_gross")
+            if realized_pnl_gross is None:
+                realized_pnl_gross = state_ctx.get("realized_pnl")
 
             stop_tp_context = {
                 "stop_loss": input_payload.get("stop_loss"),
@@ -368,6 +450,9 @@ class BreakoutStraddleManager:
                 "move_pct": move_pct,
                 "entry_reason": entry_reason,
                 "regime": regime,
+                "realized_pnl": realized_pnl,
+                "realized_pnl_gross": realized_pnl_gross,
+                "fees_estimated": fees_estimated,
                 "stop_tp_context": stop_tp_context,
             })
             output_payload = output_payload or {}
@@ -377,6 +462,9 @@ class BreakoutStraddleManager:
                 "regime": regime,
                 "age_seconds": age_s,
                 "move_pct": move_pct,
+                "realized_pnl": realized_pnl,
+                "realized_pnl_gross": realized_pnl_gross,
+                "fees_estimated": fees_estimated,
                 "stop_tp_context": stop_tp_context,
             })
             ctx = {
@@ -388,18 +476,22 @@ class BreakoutStraddleManager:
                 "size": input_payload.get("size"),
                 "age_s": age_s,
                 "move_pct": move_pct,
+                "realized_pnl": realized_pnl,
+                "fees_estimated": fees_estimated,
                 "stop_loss": input_payload.get("stop_loss"),
                 "take_profit": input_payload.get("take_profit"),
             }
             ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items() if v is not None)
             explanation = (
                 "Exit: reason={reason} entry_reason={entry_reason} age_s={age_s} move_pct={move_pct}; "
-                "stop={stop_loss} tp={take_profit}."
+                "pnl={realized_pnl} fees={fees_estimated}; stop={stop_loss} tp={take_profit}."
             ).format(
                 reason=reason,
                 entry_reason=entry_reason,
                 age_s=age_s,
                 move_pct=move_pct,
+                realized_pnl=realized_pnl,
+                fees_estimated=fees_estimated,
                 stop_loss=input_payload.get("stop_loss"),
                 take_profit=input_payload.get("take_profit"),
             )[:1000]
@@ -424,6 +516,48 @@ class BreakoutStraddleManager:
             )
 
     def _close_long(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
+        result = self._place_order(symbol, side=3, size=size)
+        if self._is_40015(result):
+            self._emit_exit_ai_log(
+                stage="Exit Execution",
+                symbol=symbol,
+                reason=reason,
+                input_payload={
+                    "symbol": symbol,
+                    "side": "LONG",
+                    "size": size,
+                    "state": state.get("state"),
+                    "entry_price": state.get("entry_price"),
+                    "last_price": state.get("last_price"),
+                    "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                    "regime": self._extract_entry_regime(state),
+                    "entry_meta": state.get("entry_meta"),
+                    "entry_order_ids": state.get("entry_order_ids"),
+                    "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                    "realized_pnl_gross": state.get("realized_pnl"),
+                    "fees_estimated": state.get("fees_estimated_total", 0.0),
+                },
+                output_payload={
+                    "side": 3,
+                    "size": size,
+                    "dry_run": self.dry_run,
+                    "success": False,
+                    "error_code": result.get("code") if isinstance(result, dict) else None,
+                    "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                },
+            )
+            self._enter_cooldown(state, "40015")
+            return False
+        success = self._order_success(result)
+        exit_ref = self._extract_order_refs(result)
+        if exit_ref:
+            state.setdefault("exit_order_ids", []).append(exit_ref)
+        close_price = state.get("last_price") or state.get("entry_price") or 0.0
+        fee_estimated = self._estimate_close_fee(size, close_price) if success else 0.0
+        if success:
+            state["fees_estimated_total"] = float(state.get("fees_estimated_total") or 0.0) + fee_estimated
+        realized_gross, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        state["last_exit_reason"] = reason
         self._emit_exit_ai_log(
             stage="Exit Execution",
             symbol=symbol,
@@ -439,20 +573,69 @@ class BreakoutStraddleManager:
                 "regime": self._extract_entry_regime(state),
                 "entry_meta": state.get("entry_meta"),
                 "entry_order_ids": state.get("entry_order_ids"),
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
             },
-            output_payload={"side": 3, "size": size, "dry_run": self.dry_run},
+            output_payload={
+                "side": 3,
+                "size": size,
+                "dry_run": self.dry_run,
+                "success": success,
+                "order_id": exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+                "client_oid": exit_ref.get("client_oid") if isinstance(exit_ref, dict) else None,
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+            },
+            order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
         )
-        result = self._place_order(symbol, side=3, size=size)
+        self._log_exit_attribution(symbol, reason, state, exit_ref)
+        return success
+
+    def _close_short(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
+        result = self._place_order(symbol, side=4, size=size)
         if self._is_40015(result):
+            self._emit_exit_ai_log(
+                stage="Exit Execution",
+                symbol=symbol,
+                reason=reason,
+                input_payload={
+                    "symbol": symbol,
+                    "side": "SHORT",
+                    "size": size,
+                    "state": state.get("state"),
+                    "entry_price": state.get("entry_price"),
+                    "last_price": state.get("last_price"),
+                    "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                    "regime": self._extract_entry_regime(state),
+                    "entry_meta": state.get("entry_meta"),
+                    "entry_order_ids": state.get("entry_order_ids"),
+                    "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                    "realized_pnl_gross": state.get("realized_pnl"),
+                    "fees_estimated": state.get("fees_estimated_total", 0.0),
+                },
+                output_payload={
+                    "side": 4,
+                    "size": size,
+                    "dry_run": self.dry_run,
+                    "success": False,
+                    "error_code": result.get("code") if isinstance(result, dict) else None,
+                    "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                },
+            )
             self._enter_cooldown(state, "40015")
             return False
+        success = self._order_success(result)
         exit_ref = self._extract_order_refs(result)
         if exit_ref:
             state.setdefault("exit_order_ids", []).append(exit_ref)
-        self._log_exit_attribution(symbol, reason, state, exit_ref)
-        return self._order_success(result)
-
-    def _close_short(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
+        close_price = state.get("last_price") or state.get("entry_price") or 0.0
+        fee_estimated = self._estimate_close_fee(size, close_price) if success else 0.0
+        if success:
+            state["fees_estimated_total"] = float(state.get("fees_estimated_total") or 0.0) + fee_estimated
+        realized_gross, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        state["last_exit_reason"] = reason
         self._emit_exit_ai_log(
             stage="Exit Execution",
             symbol=symbol,
@@ -468,18 +651,25 @@ class BreakoutStraddleManager:
                 "regime": self._extract_entry_regime(state),
                 "entry_meta": state.get("entry_meta"),
                 "entry_order_ids": state.get("entry_order_ids"),
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
             },
-            output_payload={"side": 4, "size": size, "dry_run": self.dry_run},
+            output_payload={
+                "side": 4,
+                "size": size,
+                "dry_run": self.dry_run,
+                "success": success,
+                "order_id": exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+                "client_oid": exit_ref.get("client_oid") if isinstance(exit_ref, dict) else None,
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+            },
+            order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
         )
-        result = self._place_order(symbol, side=4, size=size)
-        if self._is_40015(result):
-            self._enter_cooldown(state, "40015")
-            return False
-        exit_ref = self._extract_order_refs(result)
-        if exit_ref:
-            state.setdefault("exit_order_ids", []).append(exit_ref)
         self._log_exit_attribution(symbol, reason, state, exit_ref)
-        return self._order_success(result)
+        return success
 
     def is_blocked(self, symbol: str) -> bool:
         state = self._get_state(symbol)
@@ -946,12 +1136,19 @@ class BreakoutStraddleManager:
         state["state"] = self.STATE_HEDGED
         state["entry_price"] = price
         state["entry_time"] = now
+        state["symbol"] = symbol
         state["entry_reason"] = self._normalize_entry_reason(reason or state.get("entry_reason") or "UNKNOWN")
         if entry_meta:
             state["entry_meta"] = entry_meta
             state["entry_regime"] = entry_meta.get("regime")
+        else:
+            state["entry_meta"] = {}
+            state["entry_regime"] = "unknown"
         if entry_order_ids:
             state["entry_order_ids"] = entry_order_ids
+        else:
+            state["entry_order_ids"] = []
+        state["exit_order_ids"] = []
         state["size"] = size
         state["breakout_pct"] = breakout
         state["initial_stop_loss_pct"] = initial_stop
@@ -970,7 +1167,12 @@ class BreakoutStraddleManager:
             )
         state["atr_ratio"] = atr_ratio
         state["realized_pnl"] = 0.0
+        state["realized_pnl_net"] = 0.0
+        state["fees_estimated_total"] = 0.0
         state["pnl_applied"] = False
+        state["closed_trade_recorded"] = False
+        state["last_exit_reason"] = "unknown"
+        state["runner_side"] = "LONG"
         state["peak_price"] = price
         state["trough_price"] = price
         state["runner_start_time"] = 0.0
@@ -1188,6 +1390,7 @@ class BreakoutStraddleManager:
                     state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
                     if self._close_short(symbol, state["size"], state, reason="INITIAL_STOP_LOSS"):
                         state["state"] = self.STATE_RUNNER_LONG
+                        state["runner_side"] = "LONG"
                         state["runner_start_time"] = now
                         state["peak_price"] = price
                         logger.info("🏃 RUNNER ACTIVE (LONG)")
@@ -1225,6 +1428,7 @@ class BreakoutStraddleManager:
                     state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
                     if self._close_long(symbol, state["size"], state, reason="INITIAL_STOP_LOSS"):
                         state["state"] = self.STATE_RUNNER_SHORT
+                        state["runner_side"] = "SHORT"
                         state["runner_start_time"] = now
                         state["trough_price"] = price
                         logger.info("🏃 RUNNER ACTIVE (SHORT)")
@@ -1250,6 +1454,7 @@ class BreakoutStraddleManager:
                     state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
                     if self._close_short(symbol, state["size"], state, reason="BREAKOUT_UP"):
                         state["state"] = self.STATE_RUNNER_LONG
+                        state["runner_side"] = "LONG"
                         state["runner_start_time"] = now
                         state["peak_price"] = price
                         logger.info("🏃 RUNNER ACTIVE (LONG)")
@@ -1275,6 +1480,7 @@ class BreakoutStraddleManager:
                     state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
                     if self._close_long(symbol, state["size"], state, reason="BREAKOUT_DOWN"):
                         state["state"] = self.STATE_RUNNER_SHORT
+                        state["runner_side"] = "SHORT"
                         state["runner_start_time"] = now
                         state["trough_price"] = price
                         logger.info("🏃 RUNNER ACTIVE (SHORT)")
@@ -1412,7 +1618,9 @@ class BreakoutStraddleManager:
     def _maybe_apply_compound(self, state: Dict):
         if state.get("pnl_applied"):
             return
-        pnl = state.get("realized_pnl", 0.0)
+        self._record_closed_trade_for_ledger(state)
+        _, _, net_pnl = self._refresh_realized_pnl_snapshot(state)
+        pnl = net_pnl
         if pnl > 0:
             self.position_size_multiplier *= 1.02
             logger.info(f"📈 WIN: PnL {pnl:.2f} → size multiplier: {self.position_size_multiplier:.3f}")
