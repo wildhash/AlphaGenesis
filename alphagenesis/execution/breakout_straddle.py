@@ -59,6 +59,8 @@ class BreakoutStraddleManager:
         self.ai_log_bus = ai_log_bus
         self.probe_time_stop_seconds = max(300, int(os.getenv("PROBE_TIME_STOP_SECONDS", "900")))
         self.estimated_taker_fee_rate = max(0.0, float(os.getenv("ESTIMATED_TAKER_FEE_RATE", "0.0006")))
+        self.stale_adopted_runner_max_age_seconds = max(1800, int(os.getenv("STALE_ADOPTED_RUNNER_MAX_AGE_SECONDS", "21600")))
+        self.stale_runner_cleanup_interval_seconds = max(60, int(os.getenv("STALE_RUNNER_CLEANUP_INTERVAL_SECONDS", "300")))
         self._exit_ai_log_wired_emitted = False
         self.position_size_multiplier = 1.0
         self.last_daily_pnl = 0.0
@@ -115,6 +117,7 @@ class BreakoutStraddleManager:
             "last_exit_reason": "unknown",
             "closed_trade_recorded": False,
             "runner_side": "LONG",
+            "last_stale_cleanup_check_ts": 0.0,
         })
 
     def _reset_if_ready(self, state: Dict, now: float):
@@ -218,6 +221,108 @@ class BreakoutStraddleManager:
 
     def _mark_action(self, state: Dict, now: float):
         state["last_action_ts"] = now
+
+    def _maybe_cleanup_stale_adopted_runner(self, symbol: str, state: Dict, now: float) -> bool:
+        current_state = state.get("state")
+        if current_state not in {self.STATE_RUNNER_LONG, self.STATE_RUNNER_SHORT}:
+            return False
+        if not bool(state.get("adopted_from_ledger")):
+            return False
+
+        last_check_ts = float(state.get("last_stale_cleanup_check_ts") or 0.0)
+        if (now - last_check_ts) < self.stale_runner_cleanup_interval_seconds:
+            return False
+        state["last_stale_cleanup_check_ts"] = now
+
+        entry_time = float(state.get("entry_time") or 0.0)
+        if entry_time <= 0:
+            return False
+        age_seconds = now - entry_time
+        if age_seconds < self.stale_adopted_runner_max_age_seconds:
+            return False
+
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
+        entry_regime = self._extract_entry_regime(state)
+        size = float(state.get("size") or 0.0)
+        entry_price = float(state.get("entry_price") or 0.0)
+        last_price = float(state.get("last_price") or entry_price or 0.0)
+
+        logger.warning(
+            "🧹 STALE_ADOPTED_RUNNER_TIMEOUT symbol={} age_minutes={:.1f} state={} entry_reason={} entry_regime={}",
+            symbol,
+            age_seconds / 60.0,
+            current_state,
+            entry_reason,
+            entry_regime,
+        )
+
+        if size <= 0:
+            logger.warning(
+                "STALE_ADOPTED_RUNNER_CLOSE_RESULT symbol={} ok=False reason=invalid_size size={}",
+                symbol,
+                size,
+            )
+            return False
+
+        if not self._can_act(state, now):
+            logger.info("STALE_ADOPTED_RUNNER_CLOSE_SKIPPED symbol={} reason=action_throttle", symbol)
+            return False
+
+        self._emit_exit_ai_log(
+            stage="Exit Decision",
+            symbol=symbol,
+            reason="STALE_ADOPTED_RUNNER_TIMEOUT",
+            input_payload={
+                "symbol": symbol,
+                "state": current_state,
+                "entry_time": entry_time,
+                "entry_price": entry_price,
+                "last_price": last_price,
+                "size": size,
+                "entry_reason": entry_reason,
+                "regime": entry_regime,
+            },
+            output_payload={"action": "close_runner"},
+        )
+        logger.warning(
+            "STALE_ADOPTED_RUNNER_CLOSE_ATTEMPT symbol={} state={} size={} age_seconds={}",
+            symbol,
+            current_state,
+            size,
+            int(age_seconds),
+        )
+
+        pnl_delta = 0.0
+        if entry_price > 0.0:
+            if current_state == self.STATE_RUNNER_LONG:
+                pnl_delta = (last_price - entry_price) * size
+            else:
+                pnl_delta = (entry_price - last_price) * size
+        state["realized_pnl"] = float(state.get("realized_pnl") or 0.0) + pnl_delta
+
+        if current_state == self.STATE_RUNNER_LONG:
+            success = self._close_long(symbol, size, state, reason="STALE_ADOPTED_RUNNER_TIMEOUT")
+        else:
+            success = self._close_short(symbol, size, state, reason="STALE_ADOPTED_RUNNER_TIMEOUT")
+
+        if not success and pnl_delta:
+            state["realized_pnl"] = float(state.get("realized_pnl") or 0.0) - pnl_delta
+
+        self._mark_action(state, now)
+        logger.warning(
+            "STALE_ADOPTED_RUNNER_CLOSE_RESULT symbol={} ok={} state={} reason=STALE_ADOPTED_RUNNER_TIMEOUT",
+            symbol,
+            success,
+            current_state,
+        )
+
+        if success:
+            state["state"] = self.STATE_DONE
+            self._maybe_apply_compound(state)
+            logger.info("STALE_RUNNER_CLEANUP_COMPLETED symbol={} freed_slots=1", symbol)
+            return True
+
+        return False
 
     def _order_success(self, result: Dict) -> bool:
         if not isinstance(result, dict):
@@ -1243,6 +1348,9 @@ class BreakoutStraddleManager:
             )
             self._exit_ai_log_wired_emitted = True
         self._check_and_adopt_existing_positions(symbol, price)
+
+        if self._maybe_cleanup_stale_adopted_runner(symbol, state, now):
+            return
 
         if price <= 0:
             return

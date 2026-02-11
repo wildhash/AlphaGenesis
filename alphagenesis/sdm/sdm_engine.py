@@ -659,6 +659,11 @@ class SDMTradingEngine:
         self._warned_leverage_field = False
         self.last_feedback_ts = 0.0
         self.feedback_interval_seconds = 4 * 60 * 60
+        self.max_40015_errors = max(1, int(os.getenv("SYMBOL_40015_MAX_ERRORS", "3")))
+        self.error40015_window_seconds = max(60, int(os.getenv("SYMBOL_40015_WINDOW_SECONDS", "600")))
+        self.symbol_quarantine_seconds = max(60, int(os.getenv("SYMBOL_40015_QUARANTINE_SECONDS", "1800")))
+        self.error_count_40015: Dict[str, List[float]] = defaultdict(list)
+        self.quarantine_symbols: Dict[str, float] = {}
 
         # Aggressive straddle controls (competition tuning)
         self.stop_new_if_pnl_under = -0.06
@@ -763,6 +768,67 @@ class SDMTradingEngine:
         import sys
         sys.exit(0)
 
+    def _normalize_symbol(self, symbol: Optional[str]) -> str:
+        return str(symbol or "").strip().lower()
+
+    def _cleanup_symbol_quarantine(self, now: Optional[float] = None) -> None:
+        now_ts = now if now is not None else time.time()
+        expired = [sym for sym, until in self.quarantine_symbols.items() if now_ts >= float(until)]
+        for sym in expired:
+            self.quarantine_symbols.pop(sym, None)
+            self.error_count_40015.pop(sym, None)
+            logger.info("SYMBOL_QUARANTINE_EXPIRED symbol={}", sym)
+
+    def _get_symbol_quarantine_until(self, symbol: str) -> Optional[float]:
+        sym = self._normalize_symbol(symbol)
+        if not sym:
+            return None
+        return self.quarantine_symbols.get(sym)
+
+    def _is_symbol_quarantined(self, symbol: str) -> bool:
+        now_ts = time.time()
+        self._cleanup_symbol_quarantine(now=now_ts)
+        sym = self._normalize_symbol(symbol)
+        if not sym:
+            return False
+        until = self.quarantine_symbols.get(sym)
+        if until is None:
+            return False
+        if now_ts < float(until):
+            logger.warning("SYMBOL_QUARANTINED_BLOCK symbol={} until={}", sym, int(float(until)))
+            return True
+        return False
+
+    def _register_40015_error(self, symbol: str, error_code: Any, error_msg: Any, source: str = "entry_order") -> bool:
+        code_text = "" if error_code is None else str(error_code)
+        msg_text = "" if error_msg is None else str(error_msg)
+        combined = f"{code_text} {msg_text}".lower()
+        if "40015" not in combined and "position side invalid" not in combined:
+            return False
+
+        now_ts = time.time()
+        sym = self._normalize_symbol(symbol)
+        if not sym:
+            return True
+
+        history = [ts for ts in self.error_count_40015.get(sym, []) if (now_ts - ts) <= self.error40015_window_seconds]
+        history.append(now_ts)
+        self.error_count_40015[sym] = history
+        if len(history) >= self.max_40015_errors:
+            until_ts = now_ts + self.symbol_quarantine_seconds
+            previous_until = float(self.quarantine_symbols.get(sym, 0.0) or 0.0)
+            if until_ts > previous_until:
+                self.quarantine_symbols[sym] = until_ts
+                logger.error(
+                    "SYMBOL_QUARANTINE_ACTIVATED symbol={} until={} errors_in_window={} window_s={} reason=40015 source={}",
+                    sym,
+                    int(until_ts),
+                    len(history),
+                    self.error40015_window_seconds,
+                    source,
+                )
+        return True
+
     def start(self):
         """Start the SDM trading engine."""
         logger.info("\n" + "="*70)
@@ -828,6 +894,7 @@ class SDMTradingEngine:
             try:
                 self.iteration += 1
                 timestamp = datetime.now()
+                self._cleanup_symbol_quarantine()
 
                 if self.loser_kill_switch_enabled:
                     new_blocks = self.loser_kill_switch.refresh(position_ledger=self.position_ledger)
@@ -1673,6 +1740,41 @@ class SDMTradingEngine:
                     )
                     continue
 
+                if self._is_symbol_quarantined(symbol):
+                    quarantine_until = self._get_symbol_quarantine_until(symbol)
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    logger.info(
+                        "DIAG_LOOP_SKIP symbol={} reason=symbol_quarantined until={}",
+                        symbol,
+                        int(float(quarantine_until or 0.0)),
+                    )
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": None,
+                            "signal": None,
+                            "confidence": 0.0,
+                            "symbol_quarantined": True,
+                            "quarantine_until": quarantine_until,
+                            "open_positions": open_positions,
+                            "capital": capital,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "SYMBOL_QUARANTINED",
+                        },
+                        explanation=(
+                            "HOLD: symbol_quarantined=True, "
+                            f"quarantine_until={int(float(quarantine_until or 0.0))}, "
+                            f"open_positions={open_positions}, capital=${capital:.2f}, "
+                            "reason=SYMBOL_QUARANTINED"
+                        ),
+                    )
+                    continue
+
                 # Determine market regime
                 regime = self._detect_regime_for_symbol(symbol)
 
@@ -2394,6 +2496,15 @@ class SDMTradingEngine:
                 logger.warning("🟠 DIAGNOSTIC_SUSPEND - blocking order execution for {}", symbol)
                 return
 
+            if self._is_symbol_quarantined(symbol):
+                quarantine_until = self._get_symbol_quarantine_until(symbol)
+                logger.warning(
+                    "SYMBOL_QUARANTINED_BLOCK symbol={} until={} stage=execute_action",
+                    symbol,
+                    int(float(quarantine_until or 0.0)),
+                )
+                return
+
             self._log_straddle_signal_debug(
                 symbol=symbol,
                 action=action,
@@ -2828,6 +2939,19 @@ class SDMTradingEngine:
                     size=action['position_size'],
                     is_market=True
                 )
+                if isinstance(result, dict):
+                    if self._register_40015_error(
+                        symbol=symbol,
+                        error_code=result.get("code"),
+                        error_msg=result.get("msg") or result.get("error"),
+                        source="entry_order",
+                    ):
+                        logger.warning(
+                            "SYMBOL_40015_ERROR symbol={} code={} msg={}",
+                            symbol,
+                            result.get("code"),
+                            str(result.get("msg") or result.get("error") or "")[:220],
+                        )
 
                 success = 'order_id' in result or 'client_oid' in result
 
@@ -2884,6 +3008,9 @@ class SDMTradingEngine:
                 if success:
                     order_id = result.get('order_id') or result.get('client_oid')
                     client_order_id = result.get('client_oid')
+                    symbol_norm = self._normalize_symbol(symbol)
+                    if symbol_norm:
+                        self.error_count_40015.pop(symbol_norm, None)
 
                     decision.executed = True
                     decision.execution_reason = 'order_placed'
