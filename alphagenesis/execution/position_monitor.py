@@ -11,7 +11,7 @@ Updates ledger, journal, and bandit automatically.
 """
 import time
 import threading
-from typing import Dict, List
+from typing import Dict, List, Optional
 from loguru import logger
 
 
@@ -41,6 +41,9 @@ class PositionMonitor:
 
         self.is_running = False
         self.monitor_thread = None
+        self._partial_close_cooldown_until: Dict[str, float] = {}
+        self.partial_close_reconcile_cooldown_seconds = 300
+        self.partial_close_size_epsilon = 0.001
 
         logger.info(f"PositionMonitor initialized (poll every {poll_interval_seconds}s)")
 
@@ -352,6 +355,79 @@ class PositionMonitor:
 
         return exchange_map
 
+    def _fetch_single_exchange_position(self, symbol: str) -> Optional[Dict]:
+        """Fetch a single symbol position snapshot from exchange."""
+        try:
+            response = self.weex.get_position(symbol)
+        except Exception as e:
+            logger.warning("PARTIAL_CLOSE_RECONCILE_FETCH_FAILED symbol={} error={}", symbol, e)
+            return None
+
+        if isinstance(response, dict) and isinstance(response.get('position'), list):
+            data = response.get('position')
+        else:
+            data = response.get('data') if isinstance(response, dict) else response
+        if isinstance(data, dict):
+            for key in ('position', 'positions', 'data'):
+                if isinstance(data.get(key), list):
+                    data = data.get(key)
+                    break
+
+        if not data:
+            return None
+
+        pos_list = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+        for pos in pos_list:
+            raw_size = None
+            for key in ('size', 'total', 'position', 'pos', 'qty'):
+                if key in pos and pos[key] is not None:
+                    raw_size = pos[key]
+                    break
+
+            try:
+                size = float(raw_size or 0.0)
+            except (TypeError, ValueError):
+                size = 0.0
+
+            if abs(size) <= self.partial_close_size_epsilon:
+                continue
+
+            side_value = pos.get('side') or pos.get('hold_side') or pos.get('holdSide')
+            if isinstance(side_value, str):
+                side_str = side_value.upper()
+            else:
+                try:
+                    side_str = 'LONG' if int(side_value or 1) == 1 else 'SHORT'
+                except (TypeError, ValueError):
+                    side_str = 'LONG'
+
+            entry_price = 0.0
+            for key in ('open_price', 'avg_open_price', 'avgOpenPrice', 'entry_price'):
+                if key in pos and pos[key] is not None:
+                    try:
+                        entry_price = float(pos[key])
+                    except (TypeError, ValueError):
+                        entry_price = 0.0
+                    break
+
+            mark_price = 0.0
+            for key in ('mark_price', 'markPrice', 'fair_price', 'last', 'last_price'):
+                if key in pos and pos[key] is not None:
+                    try:
+                        mark_price = float(pos[key])
+                    except (TypeError, ValueError):
+                        mark_price = 0.0
+                    break
+
+            return {
+                'side': side_str,
+                'size': abs(size),
+                'entry_price': entry_price,
+                'mark_price': mark_price,
+            }
+
+        return None
+
     def _determine_close_reason(self, symbol: str, ledger_pos) -> str:
         """
         Determine why position closed.
@@ -376,14 +452,89 @@ class PositionMonitor:
         ledger_pos,
         exchange_pos: Dict
     ):
-        """Handle partial position close."""
-        logger.info(f"📊 Partial close detected: {symbol} "
-                   f"{ledger_pos.size} → {exchange_pos['size']}")
+        """Handle partial position close via ledger/exchange reconciliation."""
+        observed_exchange_size = float(exchange_pos.get('size', 0.0) or 0.0)
+        logger.info(
+            "📊 Partial close detected: {} {} → {}",
+            symbol,
+            ledger_pos.size,
+            observed_exchange_size,
+        )
 
-        # TODO: Implement partial close handling
-        # For now, just log it
-        # Full implementation would:
-        # 1. Calculate partial realized P&L
-        # 2. Update ledger position size
-        # 3. Log partial close event
-        # 4. NOT update bandit (wait for full close)
+        now = time.time()
+        cooldown_until = float(self._partial_close_cooldown_until.get(symbol, 0.0))
+        if now < cooldown_until:
+            remaining = int(cooldown_until - now)
+            logger.info(
+                "PARTIAL_CLOSE_RECONCILE_COOLDOWN_ACTIVE symbol={} remaining_s={}",
+                symbol,
+                remaining,
+            )
+            return
+
+        logger.warning(
+            "PARTIAL_CLOSE_RECONCILE_ATTEMPT symbol={} ledger_size={} observed_exchange_size={}",
+            symbol,
+            ledger_pos.size,
+            observed_exchange_size,
+        )
+
+        try:
+            if observed_exchange_size <= self.partial_close_size_epsilon:
+                close_price = float(
+                    exchange_pos.get('mark_price')
+                    or exchange_pos.get('entry_price')
+                    or ledger_pos.entry_price
+                    or 0.0
+                )
+                self.ledger.force_close_position(
+                    symbol=symbol,
+                    realized_pnl=0.0,
+                    reason="partial_close_exchange_flat",
+                    close_price=close_price,
+                )
+                logger.warning(
+                    "PARTIAL_CLOSE_RECONCILE_FLAT_FORCE_CLOSE symbol={} close_price={}",
+                    symbol,
+                    close_price,
+                )
+                self._partial_close_cooldown_until[symbol] = now + self.partial_close_reconcile_cooldown_seconds
+                return
+
+            diff = abs(float(ledger_pos.size or 0.0) - observed_exchange_size)
+            if diff <= self.partial_close_size_epsilon:
+                logger.info(
+                    "PARTIAL_CLOSE_RECONCILE_NOOP symbol={} exchange_size={} diff={}",
+                    symbol,
+                    observed_exchange_size,
+                    diff,
+                )
+                self._partial_close_cooldown_until[symbol] = now + self.partial_close_reconcile_cooldown_seconds
+                return
+
+            adjusted = self.ledger.adjust_position_size(
+                symbol=symbol,
+                new_size=observed_exchange_size,
+                avg_price=exchange_pos.get('entry_price'),
+                reason="partial_close_reconciliation",
+            )
+            if adjusted:
+                logger.warning(
+                    "PARTIAL_CLOSE_RECONCILE_APPLIED symbol={} old_size={} new_size={}",
+                    symbol,
+                    ledger_pos.size,
+                    observed_exchange_size,
+                )
+            else:
+                logger.warning(
+                    "PARTIAL_CLOSE_RECONCILE_SKIPPED symbol={} target_size={} reason=no_change_or_flat",
+                    symbol,
+                    observed_exchange_size,
+                )
+            self._partial_close_cooldown_until[symbol] = now + self.partial_close_reconcile_cooldown_seconds
+        except Exception as e:
+            logger.error(
+                "PARTIAL_CLOSE_RECONCILE_FAILED symbol={} error={}",
+                symbol,
+                e,
+            )

@@ -395,6 +395,115 @@ class PositionLedger:
 
         self._save(force=True)
 
+    def force_close_position(
+        self,
+        symbol: str,
+        realized_pnl: float = 0.0,
+        reason: str = "manual_force_close",
+        close_price: Optional[float] = None,
+        fees_estimated: float = 0.0,
+    ) -> bool:
+        """
+        Force-close a position using current ledger state.
+        Useful for reconciliation when exchange reports FLAT.
+        """
+        pos = self.get_position(symbol)
+        if pos.side == "FLAT" or pos.size <= 0:
+            logger.info("FORCE_CLOSE_POSITION_NOOP symbol={} already_flat_or_empty", symbol)
+            return False
+
+        resolved_close_price = float(close_price) if close_price is not None else 0.0
+        if resolved_close_price <= 0:
+            resolved_close_price = float(pos.entry_price or 0.0)
+        if resolved_close_price <= 0:
+            resolved_close_price = 1e-9
+
+        self.close_position(
+            symbol=symbol,
+            close_price=resolved_close_price,
+            realized_pnl=float(realized_pnl or 0.0),
+            close_reason=str(reason or "manual_force_close"),
+            fees_estimated=float(fees_estimated or 0.0),
+        )
+        logger.warning(
+            "FORCE_CLOSE_POSITION_APPLIED symbol={} reason={} close_price={} realized_pnl={}",
+            symbol,
+            reason,
+            resolved_close_price,
+            float(realized_pnl or 0.0),
+        )
+        return True
+
+    def adjust_position_size(
+        self,
+        symbol: str,
+        new_size: float,
+        avg_price: Optional[float] = None,
+        reason: str = "reconciliation",
+    ) -> bool:
+        """
+        Synchronize ledger size to exchange-reported size without changing side.
+        """
+        pos = self.get_position(symbol)
+        if pos.side == "FLAT":
+            logger.warning(
+                "ADJUST_POSITION_SIZE_SKIPPED symbol={} reason=flat_position",
+                symbol,
+            )
+            return False
+
+        target_size = max(0.0, float(new_size or 0.0))
+        if target_size <= 0.0:
+            logger.warning(
+                "ADJUST_POSITION_SIZE_TO_ZERO symbol={} reason={} -> force close",
+                symbol,
+                reason,
+            )
+            return self.force_close_position(
+                symbol=symbol,
+                realized_pnl=0.0,
+                reason=f"{reason}_size_zero",
+                close_price=avg_price if avg_price is not None else pos.entry_price,
+            )
+
+        old_size = float(pos.size or 0.0)
+        if abs(old_size - target_size) <= 0.001:
+            logger.info(
+                "ADJUST_POSITION_SIZE_NOOP symbol={} size={} reason={}",
+                symbol,
+                target_size,
+                reason,
+            )
+            return False
+
+        old_entry = float(pos.entry_price or 0.0)
+        if avg_price is not None:
+            try:
+                normalized_avg = float(avg_price)
+                if normalized_avg > 0:
+                    pos.entry_price = normalized_avg
+            except (TypeError, ValueError):
+                pass
+
+        pos.size = target_size
+        pos.last_update_ts = time.time()
+        pos.last_exchange_sync_ts = pos.last_update_ts
+
+        if symbol in self.desync_events:
+            self.desync_events.pop(symbol, None)
+
+        self._save(force=True)
+        logger.warning(
+            "LEDGER_POSITION_SIZE_SYNCED symbol={} old_size={} new_size={} old_entry={} new_entry={} reason={}",
+            symbol,
+            old_size,
+            target_size,
+            old_entry,
+            pos.entry_price,
+            reason,
+        )
+        return True
+
     def update_unrealized_pnl(self, symbol: str, current_price: float):
         """Update unrealized P&L for open position."""
         if symbol not in self.positions:
