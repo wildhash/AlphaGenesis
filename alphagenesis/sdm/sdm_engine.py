@@ -311,11 +311,40 @@ class SDMTradingEngine:
         self.tier_b_risk_pct = float(os.getenv("TIER_B_RISK_PCT", "0.015"))
         self.tier_c_risk_pct = float(os.getenv("TIER_C_RISK_PCT", "0.01"))
 
+        # Probe mode: controlled data collection with reduced size.
+        self.probe_mode_enabled = os.getenv("PROBE_MODE_ENABLED", "true").lower() == "true"
+        self.probe_entry_reason = os.getenv("PROBE_ENTRY_REASON", "LOW_VOL_EXTREME_OVERRIDE").strip()
+        self.probe_override_allowlist = {
+            s.strip().lower()
+            for s in os.getenv("PROBE_OVERRIDE_ALLOWLIST", "cmt_bnbusdt,cmt_adausdt").split(",")
+            if s.strip()
+        }
+        self.probe_size_multiplier = max(0.05, min(1.0, float(os.getenv("PROBE_SIZE_MULTIPLIER", "0.5"))))
+
+        # Champion tuple scaling (disabled by default).
+        self.champion_tuple_enabled = os.getenv("CHAMPION_TUPLE_ENABLED", "false").lower() == "true"
+        self.champion_symbol = os.getenv("CHAMPION_SYMBOL", "").strip().lower()
+        self.champion_entry_reason = os.getenv("CHAMPION_ENTRY_REASON", "").strip()
+        self.champion_regime = os.getenv("CHAMPION_REGIME", "").strip().lower()
+        champion_size_raw = os.getenv("CHAMPION_SIZE_MULTIPLIER", "1.10")
+        try:
+            champion_size_parsed = float(champion_size_raw)
+        except (TypeError, ValueError):
+            champion_size_parsed = 1.10
+        self.champion_size_multiplier = max(1.10, min(1.15, champion_size_parsed))
+        self._champion_tuple_warned_incomplete = False
+
         self.priority_symbols = list(self.tier_a_pairs)
         self.secondary_symbols = list(self.tier_b_pairs)
         self.max_active_symbols = 8
         self.symbols = self.tier_a_pairs + self.tier_b_pairs + self.tier_c_pairs
         self.active_symbols = list(self.symbols)
+        if abs(self.champion_size_multiplier - champion_size_parsed) > 1e-9:
+            logger.warning(
+                "CHAMPION_SIZE_MULTIPLIER_CLAMPED raw={} clamped={:.3f}",
+                champion_size_raw,
+                self.champion_size_multiplier,
+            )
 
         # Graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -1610,9 +1639,77 @@ class SDMTradingEngine:
             tier_risk_pct = self.tier_c_risk_pct
             tier_label = "C"
 
+        signal_reason = signal.get('reason', '')
+        entry_meta = signal.get('entry_meta')
+        if not isinstance(entry_meta, dict):
+            entry_meta = {}
+        regime_str_l = regime_str.lower() if isinstance(regime_str, str) else str(regime_str).lower()
+        symbol_l = symbol.lower()
+
         position_size_pct = tier_risk_pct
         logger.info("Tier {} sizing: size_pct={:.3f}", tier_label, position_size_pct)
-        position_value = context['balance'] * position_size_pct
+
+        probe_thresholds = entry_meta.get("thresholds")
+        probe_gates = entry_meta.get("gates")
+        probe_vol_bucket = entry_meta.get("vol_bucket")
+        probe_atr_ratio = entry_meta.get("atr_ratio")
+
+        signal_probe_requested = bool(signal.get("probe_mode"))
+        probe_mode = (
+            self.probe_mode_enabled
+            and signal_reason == self.probe_entry_reason
+            and symbol_l in self.probe_override_allowlist
+        )
+        if signal_probe_requested and not probe_mode:
+            logger.info(
+                "PROBE_MODE_SIGNAL_IGNORED symbol={} reason={} probe_enabled={} in_allowlist={} expected_reason={}",
+                symbol,
+                signal_reason,
+                self.probe_mode_enabled,
+                symbol_l in self.probe_override_allowlist,
+                self.probe_entry_reason,
+            )
+
+        size_scale = 1.0
+        if probe_mode:
+            size_scale *= self.probe_size_multiplier
+            logger.info(
+                "PROBE_MODE=1 symbol={} reason={} size_scale={:.3f} allowlist={}",
+                symbol,
+                signal_reason,
+                size_scale,
+                sorted(self.probe_override_allowlist),
+            )
+
+        champion_scale_applied = False
+        champion_tuple_ready = bool(self.champion_symbol and self.champion_entry_reason and self.champion_regime)
+        if self.champion_tuple_enabled:
+            if not champion_tuple_ready:
+                if not self._champion_tuple_warned_incomplete:
+                    logger.warning(
+                        "CHAMPION_SCALE_SKIPPED reason=incomplete_tuple symbol={} entry_reason={} regime={}",
+                        self.champion_symbol or "<empty>",
+                        self.champion_entry_reason or "<empty>",
+                        self.champion_regime or "<empty>",
+                    )
+                    self._champion_tuple_warned_incomplete = True
+            else:
+                champion_symbol_ok = symbol_l == self.champion_symbol
+                champion_reason_ok = signal_reason == self.champion_entry_reason
+                champion_regime_ok = regime_str_l == self.champion_regime
+                if champion_symbol_ok and champion_reason_ok and champion_regime_ok:
+                    size_scale *= self.champion_size_multiplier
+                    champion_scale_applied = True
+                    logger.info(
+                        "CHAMPION_SCALE_APPLIED=1 symbol={} reason={} regime={} multiplier={:.3f}",
+                        symbol,
+                        signal_reason,
+                        regime_str,
+                        self.champion_size_multiplier,
+                    )
+
+        balance_value = float(context.get('balance') or 0.0)
+        position_value = balance_value * position_size_pct * size_scale
         size = position_value / price
 
         # Pre-round size to avoid precision issues - defensive measure
@@ -1654,7 +1751,37 @@ class SDMTradingEngine:
             else:
                 take_profit = price * (1 - take_profit_pct)
 
-        entry_meta = signal.get('entry_meta')
+        positions_snapshot = self.position_ledger.get_all_positions()
+        current_positions = len(positions_snapshot)
+        _, margin_used_live, total_notional_live = self._calculate_position_metrics(positions_snapshot)
+        gross_cap_pct = 0.30
+        gross_exposure_pct = (
+            (total_notional_live / self.current_capital)
+            if self.current_capital and self.current_capital > 0
+            else None
+        )
+        margin_ratio = (
+            (margin_used_live / self.current_capital)
+            if self.current_capital and self.current_capital > 0
+            else None
+        )
+        risk_headroom = {
+            "gross_exposure_cap_pct": gross_cap_pct,
+            "gross_exposure_current_pct": gross_exposure_pct,
+            "gross_exposure_remaining_pct": (
+                max(0.0, gross_cap_pct - gross_exposure_pct)
+                if gross_exposure_pct is not None
+                else None
+            ),
+            "max_margin_ratio": getattr(self.risk_manager, "max_margin_ratio", None),
+            "margin_ratio_current": margin_ratio,
+            "margin_ratio_remaining": (
+                max(0.0, float(getattr(self.risk_manager, "max_margin_ratio", 0.0)) - margin_ratio)
+                if margin_ratio is not None
+                else None
+            ),
+        }
+
         action = {
             'symbol': symbol,
             'direction': signal['direction'],
@@ -1663,7 +1790,7 @@ class SDMTradingEngine:
             'position_size': size,
             'max_leverage': 15.0,
             'risk_reward_ratio': 3.0,
-            'reason': signal.get('reason', ''),
+            'reason': signal_reason,
             'strategy': chosen_strategy,
             'regime': regime_str,
             'stop_loss': stop_loss,
@@ -1671,10 +1798,41 @@ class SDMTradingEngine:
             # Features for journal
             'features': features,
             'entry_meta': entry_meta,
+            'probe_mode': probe_mode,
+            'probe_symbol_allowlist': sorted(self.probe_override_allowlist),
+            'size_scale': size_scale,
+            'champion_scale_applied': champion_scale_applied,
+            'gates_evaluated': probe_gates,
+            'gate_thresholds': probe_thresholds,
+            'vol_bucket': probe_vol_bucket,
+            'atr_ratio': probe_atr_ratio,
+            'risk_headroom': risk_headroom,
+            'size_floor_applied': False,
         }
 
-        current_positions = len(self.position_ledger.get_all_positions())
-        risk_headroom = None
+        strategy_explanation = (
+            "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
+            "entry_reason={reason} selected_action={direction} conf={conf} over=HOLD; "
+            "probe={probe} scale={scale} champion={champion}; "
+            "gates={gates} thresholds={thresholds} risk_headroom={risk_headroom}."
+        ).format(
+            regime=regime_str,
+            mom=momentum_pct,
+            rsi=rsi,
+            atr=atr,
+            reason=action.get("reason"),
+            direction=action.get("direction"),
+            conf=action.get("confidence"),
+            probe=probe_mode,
+            scale=f"{size_scale:.3f}",
+            champion=champion_scale_applied,
+            gates=probe_gates,
+            thresholds=probe_thresholds,
+            risk_headroom=risk_headroom,
+        )
+        if len(strategy_explanation) > 1000:
+            strategy_explanation = strategy_explanation[:997] + "..."
+
         self._emit_ai_log(
             stage="Strategy Evaluation",
             model=f"SDM:{chosen_strategy}",
@@ -1685,12 +1843,22 @@ class SDMTradingEngine:
                 "price": price,
                 "balance": context.get("balance"),
                 "signal": action.get("reason"),
+                "entry_reason": action.get("reason"),
                 "momentum_pct": momentum_pct,
                 "rsi": rsi,
                 "atr": atr,
                 "funding_rate": funding_rate,
                 "current_positions": current_positions,
                 "risk_headroom": risk_headroom,
+                "probe_mode": probe_mode,
+                "probe_symbol_allowlist": sorted(self.probe_override_allowlist),
+                "size_scale": size_scale,
+                "champion_scale_applied": champion_scale_applied,
+                "gates_evaluated": probe_gates,
+                "thresholds": probe_thresholds,
+                "vol_bucket": probe_vol_bucket,
+                "atr_ratio": probe_atr_ratio,
+                "size_floor_applied": action.get("size_floor_applied"),
                 "entry_meta": entry_meta,
             },
             output_payload={
@@ -1700,19 +1868,17 @@ class SDMTradingEngine:
                 "position_size": action.get("position_size"),
                 "stop_loss": action.get("stop_loss"),
                 "take_profit": action.get("take_profit"),
+                "order_params": {
+                    "entry_price": action.get("entry_price"),
+                    "position_size": action.get("position_size"),
+                    "stop_loss": action.get("stop_loss"),
+                    "take_profit": action.get("take_profit"),
+                },
+                "size_scale": size_scale,
+                "probe_mode": probe_mode,
+                "champion_scale_applied": champion_scale_applied,
             },
-            explanation=(
-                "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
-                "chose {direction} conf={conf} reason={reason}."
-            ).format(
-                regime=regime_str,
-                mom=momentum_pct,
-                rsi=rsi,
-                atr=atr,
-                direction=action.get("direction"),
-                conf=action.get("confidence"),
-                reason=action.get("reason"),
-            )
+            explanation=strategy_explanation
         )
 
         logger.info(
@@ -1787,10 +1953,14 @@ class SDMTradingEngine:
                 logger.info("STRADDLE_BYPASS_LOW_VOL_ATR symbol=%s confidence=%.3f", symbol, float(action.get('confidence', 0.0)))
             else:
                 if action.get('confidence', 0.0) >= self.straddle_confidence_threshold:
+                    size_scale = float(action.get("size_scale", 1.0) or 1.0)
+                    if size_scale <= 0:
+                        size_scale = 1.0
+                    legacy_for_straddle = self.legacy_amount * size_scale
                     opened = self.straddle_manager.try_open(
                         symbol=symbol,
                         price=action.get('entry_price', 0.0),
-                        legacy_amount=self.legacy_amount,
+                        legacy_amount=legacy_for_straddle,
                         reason=action.get('reason'),
                         entry_meta=action.get('entry_meta'),
                     )
@@ -1811,6 +1981,8 @@ class SDMTradingEngine:
 
             
             
+            size_floor_applied = False
+
             # SIZE_FLOOR_APPLIED: minimum notional floor for LOW_VOL_SHORT_GATE_X3_WITH_ATR shorts
             if action.get('direction') == 'SHORT' and action.get('reason') == 'LOW_VOL_SHORT_GATE_X3_WITH_ATR':
                 if action.get('position_size', 0.0) <= 0.0:
@@ -1830,10 +2002,13 @@ class SDMTradingEngine:
                         d_step = decimal.Decimal(str(step))
                         rounded = (d_qty / d_step).to_integral_value(rounding=decimal.ROUND_UP) * d_step
                         action['position_size'] = float(rounded)
+                        size_floor_applied = True
+                        action["size_floor_applied"] = True
                         logger.info(
                             "SIZE_FLOOR_APPLIED symbol=%s reason=%s price=%.6f old_qty=%.8f new_qty=%.8f min_notional=%.2f",
                             symbol, action.get('reason'), price, old_qty, action['position_size'], MIN_NOTIONAL_USDT
                         )
+            action.setdefault("size_floor_applied", size_floor_applied)
 
 # Skip if position size too small
             if action['position_size'] <= 0:
@@ -1956,8 +2131,17 @@ class SDMTradingEngine:
                 "ledger_ok": ledger_approved,
                 "gross_exposure_ok": not gross_exposure_blocked,
                 "risk_ok": risk_approved,
+                "size_floor_applied": action.get("size_floor_applied"),
                 "min_size_floor_applied": action.get("size_floor_applied"),
                 "straddle_bypassed": action.get("straddle_bypassed"),
+                "probe_mode": action.get("probe_mode"),
+                "size_scale": action.get("size_scale"),
+                "champion_scale_applied": action.get("champion_scale_applied"),
+                "gates_evaluated": action.get("gates_evaluated"),
+                "thresholds": action.get("gate_thresholds"),
+                "vol_bucket": action.get("vol_bucket"),
+                "atr_ratio": action.get("atr_ratio"),
+                "risk_headroom": action.get("risk_headroom"),
                 "block_reason": block_reason,
             }
 
@@ -2045,10 +2229,47 @@ class SDMTradingEngine:
                 "ledger_ok": ledger_approved,
                 "gross_exposure_ok": not gross_exposure_blocked,
                 "risk_ok": risk_approved,
+                "size_floor_applied": action.get("size_floor_applied"),
                 "min_size_floor_applied": action.get("size_floor_applied"),
                 "straddle_bypassed": action.get("straddle_bypassed"),
+                "probe_mode": action.get("probe_mode"),
+                "size_scale": action.get("size_scale"),
+                "champion_scale_applied": action.get("champion_scale_applied"),
+                "gates_evaluated": action.get("gates_evaluated"),
+                "thresholds": action.get("gate_thresholds"),
+                "vol_bucket": action.get("vol_bucket"),
+                "atr_ratio": action.get("atr_ratio"),
+                "risk_headroom": action.get("risk_headroom"),
                 "block_reason": block_reason,
             }
+            order_params = {
+                "entry_price": action.get("entry_price"),
+                "position_size": action.get("position_size"),
+                "stop_loss": action.get("stop_loss"),
+                "take_profit": action.get("take_profit"),
+                "leverage_cap": action.get("max_leverage"),
+            }
+            selected_over = "HOLD" if action.get("direction") != "HOLD" else "NO_TRADE"
+            decision_rationale = (
+                "Decision: selected={direction} entry_reason={entry_reason} conf={conf} "
+                "over={selected_over}; order={order_params}; "
+                "gates ledger_ok={ledger_ok} gross_ok={gross_ok} risk_ok={risk_ok}; "
+                "probe={probe} size_scale={size_scale} champion={champion}."
+            ).format(
+                direction=action.get("direction"),
+                entry_reason=action.get("reason"),
+                conf=confidence_str,
+                selected_over=selected_over,
+                order_params=order_params,
+                ledger_ok=ledger_approved,
+                gross_ok=not gross_exposure_blocked,
+                risk_ok=risk_approved,
+                probe=action.get("probe_mode"),
+                size_scale=action.get("size_scale"),
+                champion=action.get("champion_scale_applied"),
+            )
+            if len(decision_rationale) > 1000:
+                decision_rationale = decision_rationale[:997] + "..."
             self._emit_ai_log(
                 stage="Decision Making",
                 model="AlphaGenesis-SDM-v1",
@@ -2060,6 +2281,16 @@ class SDMTradingEngine:
                     "momentum_pct": momentum_pct,
                     "atr": atr,
                     "rsi": rsi,
+                    "probe_mode": action.get("probe_mode"),
+                    "probe_symbol_allowlist": action.get("probe_symbol_allowlist"),
+                    "size_scale": action.get("size_scale"),
+                    "entry_reason": action.get("reason"),
+                    "gates_evaluated": action.get("gates_evaluated"),
+                    "thresholds": action.get("gate_thresholds"),
+                    "vol_bucket": action.get("vol_bucket"),
+                    "atr_ratio": action.get("atr_ratio"),
+                    "risk_headroom": action.get("risk_headroom"),
+                    "size_floor_applied": action.get("size_floor_applied"),
                     "gate_results": gate_results,
                 },
                 output_payload={
@@ -2068,39 +2299,28 @@ class SDMTradingEngine:
                     "risk_approved": risk_approved,
                     "ledger_approved": ledger_approved,
                     "gross_exposure_blocked": gross_exposure_blocked,
+                    "probe_mode": action.get("probe_mode"),
+                    "size_scale": action.get("size_scale"),
+                    "champion_scale_applied": action.get("champion_scale_applied"),
+                    "selected_over": selected_over,
+                    "order_params": order_params,
                     "gate_results": gate_results,
                 },
-                explanation=(
-                    "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
-                    "chose {direction} conf={conf} reason={reason}; "
-                    "gates ledger_ok={ledger_ok} risk_ok={risk_ok} gross_ok={gross_ok}."
-                ).format(
-                    regime=action.get("regime"),
-                    mom=momentum_pct,
-                    rsi=rsi,
-                    atr=atr,
-                    direction=action.get("direction"),
-                    conf=confidence_str,
-                    reason=action.get("reason"),
-                    ledger_ok=ledger_approved,
-                    risk_ok=risk_approved,
-                    gross_ok=not gross_exposure_blocked,
-                ),
+                explanation=decision_rationale,
             )
 
             logger.info(
-                "AI_DECISION_TRACE symbol={} reason={} features=regime:{} momentum_pct:{} rsi:{} atr:{} gates=ledger:{} gross_exposure_blocked:{} risk:{} action={} size={}",
+                "AI_DECISION_TRACE symbol={} entry_reason={} probe={} gates=ledger:{} gross_exposure_blocked:{} risk:{} thresholds={} risk_headroom={} action={} order={}",
                 symbol,
                 action.get("reason"),
-                action.get("regime"),
-                momentum_pct,
-                rsi,
-                atr,
+                action.get("probe_mode"),
                 ledger_approved,
                 gross_exposure_blocked,
                 risk_approved,
+                action.get("gate_thresholds"),
+                action.get("risk_headroom"),
                 action.get("direction"),
-                action.get("position_size"),
+                order_params,
             )
 
             # === STEP 5: Execute Order (if gates pass) ===

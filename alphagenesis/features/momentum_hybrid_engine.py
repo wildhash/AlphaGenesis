@@ -2,6 +2,7 @@
 Momentum Hybrid Engine - Competition Edition
 Trend-following strategy with AI confirmation for WEEX AI Wars
 """
+import os
 import numpy as np
 import time
 from typing import Dict, Optional
@@ -167,15 +168,35 @@ class MomentumHybridEngine:
                         symbol
                     )
                     return "no_signal"
+                probe_override_symbols = {
+                    s.strip().lower()
+                    for s in os.getenv(
+                        "PROBE_OVERRIDE_ALLOWLIST",
+                        "cmt_bnbusdt,cmt_adausdt",
+                    ).split(",")
+                    if s.strip()
+                }
+                probe_mode_enabled = os.getenv("PROBE_MODE_ENABLED", "true").lower() == "true"
+                probe_size_multiplier_raw = os.getenv("PROBE_SIZE_MULTIPLIER", "0.5")
+                try:
+                    probe_size_multiplier = float(probe_size_multiplier_raw)
+                except (TypeError, ValueError):
+                    probe_size_multiplier = 0.5
+                probe_size_multiplier = max(0.05, min(1.0, probe_size_multiplier))
                 extreme_thresholds = {
-                    'cmt_btcusdt': 1.2,
-                    'cmt_ethusdt': 1.2,
                     'cmt_bnbusdt': 1.2,
-                    'cmt_solusdt': 1.8,
-                    'cmt_xrpusdt': 1.8,
+                    'cmt_adausdt': 1.3,
                 }
                 extreme_threshold = extreme_thresholds.get(symbol)
-                if extreme_threshold:
+                if atr_pct < 0.20:
+                    vol_bucket = "VERY_LOW_VOL"
+                elif atr_pct < 0.40:
+                    vol_bucket = "LOW_VOL"
+                elif atr_pct < 0.80:
+                    vol_bucket = "MID_VOL"
+                else:
+                    vol_bucket = "HIGH_VOL"
+                if extreme_threshold and probe_mode_enabled and symbol in probe_override_symbols:
                     if abs(momentum_pct) >= extreme_threshold and atr_rising and tr_expanding:
                         allow_long = trend_up or (
                             current_price > ema_slow and current_price > ema_fast and rsi > 55
@@ -183,10 +204,29 @@ class MomentumHybridEngine:
                         allow_short = trend_down or (
                             current_price < ema_slow and current_price < ema_fast and rsi < 45
                         )
+                        atr_ratio = (atr_pct / atr_pct_slow) if atr_pct_slow > 0 else None
+                        thresholds = {
+                            "momentum_abs_min": extreme_threshold,
+                            "rsi_long_max": 75.0,
+                            "rsi_short_min": 25.0,
+                            "atr_rising_min_ratio": 1.15,
+                            "tr_expanding_min_ratio": 1.2,
+                        }
+                        base_gates = {
+                            "low_vol_bypassed": True,
+                            "probe_mode": True,
+                            "momentum_gate": abs(momentum_pct) >= extreme_threshold,
+                            "atr_rising": atr_rising,
+                            "tr_expanding": tr_expanding,
+                            "allow_long": allow_long,
+                            "allow_short": allow_short,
+                        }
 
                         entry_features = {
                             'momentum_pct': momentum_pct,
                             'atr_pct': atr_pct,
+                            'atr_pct_slow': atr_pct_slow,
+                            'atr_ratio': atr_ratio,
                             'rsi': rsi,
                             'price': current_price,
                             'ema20': ema_fast,
@@ -206,9 +246,16 @@ class MomentumHybridEngine:
                                 trend_up,
                                 trend_down
                             )
+                            logger.info(
+                                "PROBE_MODE=1 symbol={} entry_reason=LOW_VOL_EXTREME_OVERRIDE side=LONG allowlist={}",
+                                symbol,
+                                sorted(probe_override_symbols),
+                            )
                             stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
                             take_profit_pct = stop_loss_pct * 2.5
                             reversal_aligned = (not trend_up) and allow_long
+                            entry_gates = dict(base_gates)
+                            entry_gates["reversal_aligned"] = reversal_aligned
                             return {
                                 'direction': 'LONG',
                                 'confidence': 0.72,
@@ -221,12 +268,18 @@ class MomentumHybridEngine:
                                     'symbol': symbol,
                                     'ts': time.time(),
                                     'side': 'LONG',
+                                    'probe_mode': True,
+                                    'probe_symbol_allowlist': sorted(probe_override_symbols),
+                                    'probe_size_multiplier': probe_size_multiplier,
+                                    'vol_bucket': vol_bucket,
+                                    'atr_ratio': atr_ratio,
                                     'features': entry_features,
-                                    'gates': {
-                                        'low_vol_bypassed': True,
-                                        'reversal_aligned': reversal_aligned,
-                                    },
+                                    'thresholds': thresholds,
+                                    'gates': entry_gates,
                                 },
+                                'probe_mode': True,
+                                'probe_symbol_allowlist': sorted(probe_override_symbols),
+                                'probe_size_multiplier': probe_size_multiplier,
                             }
                         if momentum_pct < 0 and allow_short and rsi > 25:
                             logger.info(
@@ -238,9 +291,16 @@ class MomentumHybridEngine:
                                 trend_up,
                                 trend_down
                             )
+                            logger.info(
+                                "PROBE_MODE=1 symbol={} entry_reason=LOW_VOL_EXTREME_OVERRIDE side=SHORT allowlist={}",
+                                symbol,
+                                sorted(probe_override_symbols),
+                            )
                             stop_loss_pct = max(0.005, (atr / current_price) * 0.6)
                             take_profit_pct = stop_loss_pct * 2.5
                             reversal_aligned = (not trend_down) and allow_short
+                            entry_gates = dict(base_gates)
+                            entry_gates["reversal_aligned"] = reversal_aligned
                             return {
                                 'direction': 'SHORT',
                                 'confidence': 0.72,
@@ -253,13 +313,30 @@ class MomentumHybridEngine:
                                     'symbol': symbol,
                                     'ts': time.time(),
                                     'side': 'SHORT',
+                                    'probe_mode': True,
+                                    'probe_symbol_allowlist': sorted(probe_override_symbols),
+                                    'probe_size_multiplier': probe_size_multiplier,
+                                    'vol_bucket': vol_bucket,
+                                    'atr_ratio': atr_ratio,
                                     'features': entry_features,
-                                    'gates': {
-                                        'low_vol_bypassed': True,
-                                        'reversal_aligned': reversal_aligned,
-                                    },
+                                    'thresholds': thresholds,
+                                    'gates': entry_gates,
                                 },
+                                'probe_mode': True,
+                                'probe_symbol_allowlist': sorted(probe_override_symbols),
+                                'probe_size_multiplier': probe_size_multiplier,
                             }
+                elif extreme_threshold and not probe_mode_enabled:
+                    logger.info(
+                        "SOFT_GATE_PROBE_SKIP symbol={} reason=probe_mode_disabled",
+                        symbol,
+                    )
+                elif extreme_threshold and symbol not in probe_override_symbols:
+                    logger.info(
+                        "SOFT_GATE_PROBE_SKIP symbol={} reason=not_in_probe_allowlist allowlist={}",
+                        symbol,
+                        sorted(probe_override_symbols),
+                    )
 
                 # LOW_VOL_SHORT_GATE_X3_WITH_ATR: conservative short unlock w/ range expansion confirmation
                 if momentum_pct <= -3.0 and rsi <= 45 and atr_pct >= 0.25:
