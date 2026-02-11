@@ -19,6 +19,8 @@ import time
 import signal
 import json
 import sqlite3
+import random
+import hashlib
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 from collections import defaultdict
@@ -695,13 +697,35 @@ class SDMTradingEngine:
         self.probe_entry_reason = os.getenv("PROBE_ENTRY_REASON", "LOW_VOL_EXTREME_OVERRIDE").strip()
         self.probe_override_allowlist = {
             s.strip().lower()
-            for s in os.getenv("PROBE_OVERRIDE_ALLOWLIST", "cmt_bnbusdt,cmt_adausdt").split(",")
+            for s in os.getenv("PROBE_OVERRIDE_ALLOWLIST", "cmt_solusdt,cmt_xrpusdt").split(",")
             if s.strip()
         }
-        self.probe_size_multiplier = max(0.05, min(1.0, float(os.getenv("PROBE_SIZE_MULTIPLIER", "0.3"))))
+        self.probe_size_multiplier = max(0.05, min(1.0, float(os.getenv("PROBE_SIZE_MULTIPLIER", "0.25"))))
         logger.info("PROBE_SIZE_MULTIPLIER_ACTIVE value={:.3f}", self.probe_size_multiplier)
 
-        # Champion tuple scaling (disabled by default).
+        # Champion ladder scaling (tuple-only, data-gated).
+        self.champion_ladder_enabled = os.getenv("CHAMPION_LADDER_ENABLED", "true").lower() == "true"
+        self.champion_ladder_state_path = os.getenv("CHAMPION_LADDER_STATE_PATH", "/opt/AlphaGenesis/tmp/champion_ladder.json")
+        self.champion_ladder_lookback_hours = max(1, int(os.getenv("CHAMPION_LADDER_LOOKBACK_HOURS", "48")))
+        self.champion_ladder_degrade_hours = max(1, int(os.getenv("CHAMPION_LADDER_DEGRADE_HOURS", "12")))
+        self.champion_ladder_quarantine_seconds = max(300, int(os.getenv("CHAMPION_LADDER_QUARANTINE_SECONDS", "7200")))
+        self.champion_ladder_min_trades_promote = max(1, int(os.getenv("CHAMPION_LADDER_MIN_TRADES", "8")))
+        self.champion_ladder_min_trades_revalidate = max(1, int(os.getenv("CHAMPION_LADDER_MIN_REVALIDATE_TRADES", "4")))
+        self.champion_ladder_soft_quarantine_min_trades = max(1, int(os.getenv("CHAMPION_LADDER_SOFT_KILL_MIN_TRADES", "5")))
+        self.champion_ladder_min_win_rate_promote = float(os.getenv("CHAMPION_LADDER_MIN_WIN_RATE", "0.55"))
+        self.champion_ladder_min_profit_factor_promote = float(os.getenv("CHAMPION_LADDER_MIN_PROFIT_FACTOR", "1.60"))
+        self.champion_ladder_min_net_pnl_promote = float(os.getenv("CHAMPION_LADDER_MIN_NET_PNL", "0.0"))
+        self.champion_ladder_degrade_win_rate = float(os.getenv("CHAMPION_LADDER_DEGRADE_WIN_RATE", "0.45"))
+        self.champion_ladder_degrade_profit_factor = float(os.getenv("CHAMPION_LADDER_DEGRADE_PROFIT_FACTOR", "1.0"))
+        self.champion_ladder_degrade_net_pnl = float(os.getenv("CHAMPION_LADDER_DEGRADE_NET_PNL", "0.0"))
+        self.champion_ladder_min_abs_pnl = max(
+            0.0,
+            float(os.getenv("CHAMPION_LADDER_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001"))),
+        )
+        self.champion_ladder_levels = (1.00, 1.10, 1.15)
+        self.champion_ladder_state = self._load_champion_ladder_state()
+
+        # Backward-compatible static champion tuple scaling (disabled by default).
         self.champion_tuple_enabled = os.getenv("CHAMPION_TUPLE_ENABLED", "false").lower() == "true"
         self.champion_symbol = os.getenv("CHAMPION_SYMBOL", "").strip().lower()
         self.champion_entry_reason = os.getenv("CHAMPION_ENTRY_REASON", "").strip()
@@ -713,6 +737,20 @@ class SDMTradingEngine:
             champion_size_parsed = 1.10
         self.champion_size_multiplier = max(1.10, min(1.15, champion_size_parsed))
         self._champion_tuple_warned_incomplete = False
+
+        # Stealth mode (deterministic jitter by tuple + 15m bucket).
+        self.stealth_mode_enabled = os.getenv("STEALTH_MODE_ENABLED", "true").lower() == "true"
+        self.stealth_time_jitter_ms_max = max(0, int(os.getenv("STEALTH_TIME_JITTER_MS_MAX", "450")))
+        self.stealth_size_jitter_pct = max(0.0, min(0.25, float(os.getenv("STEALTH_SIZE_JITTER_PCT", "0.06"))))
+        self.stealth_champion_extra_size_jitter_pct = max(
+            0.0, min(0.10, float(os.getenv("STEALTH_CHAMPION_EXTRA_SIZE_JITTER_PCT", "0.02")))
+        )
+        self.stealth_seed_salt = os.getenv("STEALTH_SEED_SALT", "weex-finals")
+        self.stealth_bucket_seconds = max(60, int(os.getenv("STEALTH_BUCKET_SECONDS", "900")))
+        self.stealth_min_size_scale = max(0.01, float(os.getenv("STEALTH_MIN_SIZE_SCALE", "0.05")))
+        self.stealth_max_size_scale = max(
+            self.stealth_min_size_scale, float(os.getenv("STEALTH_MAX_SIZE_SCALE", "2.0"))
+        )
 
         self.loser_kill_switch_enabled = os.getenv("LOSER_KILL_SWITCH_ENABLED", "true").lower() == "true"
         self.loser_kill_switch = LoserTupleKillSwitch(
@@ -732,6 +770,7 @@ class SDMTradingEngine:
                 self.loser_kill_switch.blocked_count(),
                 seeded,
             )
+        self._startup_champion_ladder_self_check()
 
         self.priority_symbols = list(self.tier_a_pairs)
         self.secondary_symbols = list(self.tier_b_pairs)
@@ -787,6 +826,459 @@ class SDMTradingEngine:
 
     def _normalize_symbol(self, symbol: Optional[str]) -> str:
         return str(symbol or "").strip().lower()
+
+    def _normalize_entry_reason(self, value: Any) -> str:
+        reason = str(value or "").strip()
+        return reason if reason else "LEGACY_NONE"
+
+    def _normalize_entry_regime(self, value: Any) -> str:
+        regime = str(value or "").strip().lower()
+        return regime if regime else "unknown"
+
+    def _tuple_key(self, symbol: Any, entry_reason: Any, regime: Any) -> str:
+        return (
+            f"{self._normalize_symbol(symbol) or 'unknown'}|"
+            f"{self._normalize_entry_reason(entry_reason)}|"
+            f"{self._normalize_entry_regime(regime)}"
+        )
+
+    def _split_tuple_key(self, tuple_key: str) -> tuple[str, str, str]:
+        parts = str(tuple_key or "unknown|LEGACY_NONE|unknown").split("|", 2)
+        while len(parts) < 3:
+            parts.append("unknown")
+        return parts[0], parts[1], parts[2]
+
+    def _default_champion_tuple_state(self) -> Dict[str, Any]:
+        return {
+            "level": 1.00,
+            "since_ms": 0,
+            "n_at_level": 0,
+            "last_eval_ms": 0,
+            "quarantine_until_ms": 0,
+        }
+
+    def _load_champion_ladder_state(self) -> Dict[str, Any]:
+        default_state = {"tuples": {}}
+        path = os.getenv("CHAMPION_LADDER_STATE_PATH", "/opt/AlphaGenesis/tmp/champion_ladder.json")
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if not os.path.exists(path):
+                return default_state
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                return default_state
+            tuples_data = data.get("tuples")
+            if not isinstance(tuples_data, dict):
+                return default_state
+            normalized: Dict[str, Dict[str, Any]] = {}
+            for key, state in tuples_data.items():
+                if not isinstance(state, dict):
+                    continue
+                normalized_state = self._default_champion_tuple_state()
+                try:
+                    normalized_state["level"] = float(state.get("level", 1.0) or 1.0)
+                except (TypeError, ValueError):
+                    normalized_state["level"] = 1.0
+                if normalized_state["level"] >= 1.149:
+                    normalized_state["level"] = 1.15
+                elif normalized_state["level"] >= 1.099:
+                    normalized_state["level"] = 1.10
+                else:
+                    normalized_state["level"] = 1.00
+                for field in ("since_ms", "n_at_level", "last_eval_ms", "quarantine_until_ms"):
+                    try:
+                        normalized_state[field] = int(state.get(field, normalized_state[field]) or 0)
+                    except (TypeError, ValueError):
+                        normalized_state[field] = 0
+                normalized[str(key)] = normalized_state
+            return {"tuples": normalized}
+        except Exception as exc:
+            logger.warning("CHAMPION_LADDER_STATE_LOAD_FAILED path={} err={}", path, exc)
+            return default_state
+
+    def _save_champion_ladder_state(self) -> None:
+        path = self.champion_ladder_state_path
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp_path = f"{path}.tmp"
+            payload = {
+                "updated_at_ms": int(time.time() * 1000),
+                "tuples": self.champion_ladder_state.get("tuples", {}),
+            }
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=True, separators=(",", ":"))
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            logger.warning("CHAMPION_LADDER_STATE_SAVE_FAILED path={} err={}", path, exc)
+
+    def _get_champion_tuple_state(self, tuple_key: str) -> Dict[str, Any]:
+        tuples_state = self.champion_ladder_state.setdefault("tuples", {})
+        state = tuples_state.get(tuple_key)
+        if not isinstance(state, dict):
+            state = self._default_champion_tuple_state()
+            tuples_state[tuple_key] = state
+        else:
+            state.setdefault("level", 1.00)
+            state.setdefault("since_ms", 0)
+            state.setdefault("n_at_level", 0)
+            state.setdefault("last_eval_ms", 0)
+            state.setdefault("quarantine_until_ms", 0)
+        return state
+
+    def _extract_net_realized_pnl(self, trade: Any) -> Optional[float]:
+        if trade is None:
+            return None
+        getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+        pnl_value = getter("realized_pnl")
+        if pnl_value is None:
+            return None
+        try:
+            pnl_float = float(pnl_value)
+        except (TypeError, ValueError):
+            return None
+        fees_estimated = getter("fees_estimated", 0.0)
+        try:
+            fees_float = float(fees_estimated or 0.0)
+        except (TypeError, ValueError):
+            fees_float = 0.0
+        pnl_is_net = bool(getter("pnl_is_net", False))
+        if not pnl_is_net:
+            pnl_float -= fees_float
+        return pnl_float
+
+    def _should_skip_closed_trade(self, trade: Any, min_abs_pnl: float) -> tuple[bool, Optional[float]]:
+        if trade is None:
+            return True, None
+        getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+        close_reason = str(getter("close_reason", "") or "").strip().lower()
+        if close_reason == "exchange_flat_detected":
+            return True, None
+        reason_norm = self._normalize_entry_reason(getter("entry_reason")).lower()
+        regime_norm = self._normalize_entry_regime(getter("entry_regime")).lower()
+        if close_reason == "exchange_closed" and reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+            return True, None
+        pnl_float = self._extract_net_realized_pnl(trade)
+        if pnl_float is None:
+            return True, None
+        if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+            return True, None
+        return False, pnl_float
+
+    def _init_tuple_stats(self) -> Dict[str, Any]:
+        return {
+            "n": 0,
+            "wins": 0,
+            "gross_profit": 0.0,
+            "gross_loss": 0.0,
+            "net_pnl": 0.0,
+            "win_rate": 0.0,
+            "pf": 0.0,
+        }
+
+    def _update_tuple_stats(self, stats: Dict[str, Any], pnl: float) -> None:
+        stats["n"] += 1
+        stats["net_pnl"] += pnl
+        if pnl > 0:
+            stats["wins"] += 1
+            stats["gross_profit"] += pnl
+        elif pnl < 0:
+            stats["gross_loss"] += abs(pnl)
+
+    def _finalize_tuple_stats(self, stats: Dict[str, Any]) -> Dict[str, Any]:
+        n = int(stats.get("n", 0) or 0)
+        wins = int(stats.get("wins", 0) or 0)
+        gross_profit = float(stats.get("gross_profit", 0.0) or 0.0)
+        gross_loss = float(stats.get("gross_loss", 0.0) or 0.0)
+        if n > 0:
+            win_rate = wins / n
+        else:
+            win_rate = 0.0
+        if gross_loss > 0:
+            pf = gross_profit / gross_loss
+        elif gross_profit > 0:
+            pf = 999.0
+        else:
+            pf = 0.0
+        stats["win_rate"] = win_rate
+        stats["pf"] = pf
+        return stats
+
+    def _collect_tuple_window_stats(
+        self,
+        symbol: str,
+        entry_reason: str,
+        regime: str,
+        lookback_hours: int,
+        degrade_hours: int,
+        since_ms: int = 0,
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        overall = self._init_tuple_stats()
+        degrade = self._init_tuple_stats()
+        at_level = self._init_tuple_stats()
+
+        now_ms = int(time.time() * 1000)
+        lookback_cutoff_ms = now_ms - (max(1, int(lookback_hours)) * 3600 * 1000)
+        degrade_cutoff_ms = now_ms - (max(1, int(degrade_hours)) * 3600 * 1000)
+        max_window_hours = max(lookback_hours, degrade_hours, 1)
+        tuple_key = self._tuple_key(symbol, entry_reason, regime)
+
+        try:
+            trades = self.position_ledger.get_recent_closed_trades(hours=max_window_hours, limit=5000)
+        except Exception as exc:
+            logger.warning("CHAMPION_TUPLE_STATS_QUERY_FAILED tuple={} err={}", tuple_key, exc)
+            return self._finalize_tuple_stats(overall), self._finalize_tuple_stats(degrade), self._finalize_tuple_stats(at_level)
+
+        min_abs_pnl = self.champion_ladder_min_abs_pnl
+        for trade in trades:
+            skip, pnl_float = self._should_skip_closed_trade(trade, min_abs_pnl)
+            if skip or pnl_float is None:
+                continue
+            getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+            trade_tuple_key = self._tuple_key(
+                getter("symbol"),
+                getter("entry_reason"),
+                getter("entry_regime"),
+            )
+            if trade_tuple_key != tuple_key:
+                continue
+            try:
+                close_ms = int(float(getter("close_time", 0.0) or 0.0) * 1000)
+            except (TypeError, ValueError):
+                close_ms = 0
+            if close_ms <= 0:
+                continue
+            if close_ms >= lookback_cutoff_ms:
+                self._update_tuple_stats(overall, pnl_float)
+            if close_ms >= degrade_cutoff_ms:
+                self._update_tuple_stats(degrade, pnl_float)
+            if since_ms > 0 and close_ms >= int(since_ms):
+                self._update_tuple_stats(at_level, pnl_float)
+
+        return (
+            self._finalize_tuple_stats(overall),
+            self._finalize_tuple_stats(degrade),
+            self._finalize_tuple_stats(at_level),
+        )
+
+    def _champion_gate_met(self, stats: Dict[str, Any], min_trades: int) -> bool:
+        n = int(stats.get("n", 0) or 0)
+        win_rate = float(stats.get("win_rate", 0.0) or 0.0)
+        pf = float(stats.get("pf", 0.0) or 0.0)
+        net_pnl = float(stats.get("net_pnl", 0.0) or 0.0)
+        return (
+            n >= max(1, int(min_trades))
+            and (win_rate > self.champion_ladder_min_win_rate_promote or pf > self.champion_ladder_min_profit_factor_promote)
+            and net_pnl > self.champion_ladder_min_net_pnl_promote
+        )
+
+    def _evaluate_champion_tuple(
+        self,
+        symbol: str,
+        entry_reason: str,
+        regime: str,
+    ) -> Dict[str, Any]:
+        tuple_key = self._tuple_key(symbol, entry_reason, regime)
+        state = self._get_champion_tuple_state(tuple_key)
+        prev_level = float(state.get("level", 1.0) or 1.0)
+        prev_level = 1.15 if prev_level >= 1.149 else (1.10 if prev_level >= 1.099 else 1.00)
+        now_ms = int(time.time() * 1000)
+        decision = "hold"
+        promoted = False
+        changed = False
+        quarantine_until_ms = int(state.get("quarantine_until_ms", 0) or 0)
+
+        overall_stats, degrade_stats, at_level_stats = self._collect_tuple_window_stats(
+            symbol=symbol,
+            entry_reason=entry_reason,
+            regime=regime,
+            lookback_hours=self.champion_ladder_lookback_hours,
+            degrade_hours=self.champion_ladder_degrade_hours,
+            since_ms=int(state.get("since_ms", 0) or 0),
+        )
+
+        new_n_at_level = int(at_level_stats.get("n", 0) or 0)
+        if int(state.get("n_at_level", 0) or 0) != new_n_at_level:
+            state["n_at_level"] = new_n_at_level
+            changed = True
+        state["last_eval_ms"] = now_ms
+
+        if quarantine_until_ms > now_ms:
+            decision = "quarantine_active"
+            if float(state.get("level", 1.0) or 1.0) != 1.00:
+                state["level"] = 1.00
+                changed = True
+        else:
+            if quarantine_until_ms > 0:
+                state["quarantine_until_ms"] = 0
+                changed = True
+
+            degraded = (
+                prev_level > 1.00
+                and int(degrade_stats.get("n", 0) or 0) > 0
+                and (
+                    float(degrade_stats.get("pf", 0.0) or 0.0) < self.champion_ladder_degrade_profit_factor
+                    or float(degrade_stats.get("win_rate", 0.0) or 0.0) < self.champion_ladder_degrade_win_rate
+                    or float(degrade_stats.get("net_pnl", 0.0) or 0.0) < self.champion_ladder_degrade_net_pnl
+                )
+            )
+            if degraded:
+                state["level"] = 1.00
+                state["since_ms"] = now_ms
+                state["n_at_level"] = 0
+                state["quarantine_until_ms"] = now_ms + (self.champion_ladder_quarantine_seconds * 1000)
+                decision = "degraded_rollback"
+                changed = True
+                logger.warning(
+                    "CHAMPION_DEGRADED_ROLLBACK tuple={} level_prev={:.2f} reason=pf:{:.3f}|wr:{:.3f}|net:{:.3f} quarantine_s={}",
+                    tuple_key,
+                    prev_level,
+                    float(degrade_stats.get("pf", 0.0) or 0.0),
+                    float(degrade_stats.get("win_rate", 0.0) or 0.0),
+                    float(degrade_stats.get("net_pnl", 0.0) or 0.0),
+                    self.champion_ladder_quarantine_seconds,
+                )
+            else:
+                soft_quarantine = (
+                    int(overall_stats.get("n", 0) or 0) >= self.champion_ladder_soft_quarantine_min_trades
+                    and float(overall_stats.get("net_pnl", 0.0) or 0.0) < 0.0
+                )
+                if soft_quarantine:
+                    state["level"] = 1.00
+                    state["since_ms"] = now_ms
+                    state["n_at_level"] = 0
+                    state["quarantine_until_ms"] = now_ms + (self.champion_ladder_quarantine_seconds * 1000)
+                    decision = "soft_quarantine"
+                    changed = True
+                    logger.warning(
+                        "CHAMPION_SOFT_QUARANTINE tuple={} n={} net_pnl={:.4f} quarantine_s={}",
+                        tuple_key,
+                        int(overall_stats.get("n", 0) or 0),
+                        float(overall_stats.get("net_pnl", 0.0) or 0.0),
+                        self.champion_ladder_quarantine_seconds,
+                    )
+                else:
+                    if prev_level <= 1.00 + 1e-9 and self._champion_gate_met(overall_stats, self.champion_ladder_min_trades_promote):
+                        state["level"] = 1.10
+                        state["since_ms"] = now_ms
+                        state["n_at_level"] = 0
+                        decision = "promoted_1.10"
+                        promoted = True
+                        changed = True
+                        logger.info("CHAMPION_PROMOTED tuple={} from=1.00 to=1.10 reason=gate_met", tuple_key)
+                    elif abs(prev_level - 1.10) <= 1e-9 and self._champion_gate_met(at_level_stats, self.champion_ladder_min_trades_revalidate):
+                        state["level"] = 1.15
+                        state["since_ms"] = now_ms
+                        state["n_at_level"] = 0
+                        decision = "promoted_1.15"
+                        promoted = True
+                        changed = True
+                        logger.info("CHAMPION_PROMOTED tuple={} from=1.10 to=1.15 reason=revalidated", tuple_key)
+                    else:
+                        state["level"] = prev_level
+
+        level = float(state.get("level", 1.0) or 1.0)
+        if level >= 1.149:
+            level = 1.15
+        elif level >= 1.099:
+            level = 1.10
+        else:
+            level = 1.00
+        state["level"] = level
+
+        logger.info(
+            "CHAMPION_EVAL tuple={} n={} win_rate={:.3f} pf={:.3f} net_pnl={:.4f} level={:.2f} decision={}",
+            tuple_key,
+            int(overall_stats.get("n", 0) or 0),
+            float(overall_stats.get("win_rate", 0.0) or 0.0),
+            float(overall_stats.get("pf", 0.0) or 0.0),
+            float(overall_stats.get("net_pnl", 0.0) or 0.0),
+            level,
+            decision,
+        )
+
+        if changed:
+            self._save_champion_ladder_state()
+
+        quarantine_active = int(state.get("quarantine_until_ms", 0) or 0) > now_ms
+        return {
+            "tuple_key": tuple_key,
+            "level": level,
+            "multiplier": level,
+            "promoted": promoted,
+            "decision": decision,
+            "quarantine_active": quarantine_active,
+            "quarantine_until_ms": int(state.get("quarantine_until_ms", 0) or 0),
+            "n_at_level": int(state.get("n_at_level", 0) or 0),
+        }
+
+    def _startup_champion_ladder_self_check(self) -> None:
+        tuples_state = self.champion_ladder_state.get("tuples", {})
+        logger.info("CHAMPION_LADDER_LOADED tuples={}", len(tuples_state))
+        if not self.champion_ladder_enabled:
+            return
+
+        # Evaluate tuples with at least 3 trades in the last 48h for startup visibility.
+        stats_map: Dict[str, Dict[str, Any]] = {}
+        try:
+            trades = self.position_ledger.get_recent_closed_trades(hours=48, limit=5000)
+        except Exception as exc:
+            logger.warning("CHAMPION_LADDER_STARTUP_CHECK_FAILED err={}", exc)
+            return
+
+        for trade in trades:
+            skip, pnl_float = self._should_skip_closed_trade(trade, self.champion_ladder_min_abs_pnl)
+            if skip or pnl_float is None:
+                continue
+            getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+            key = self._tuple_key(
+                getter("symbol"),
+                getter("entry_reason"),
+                getter("entry_regime"),
+            )
+            if key not in stats_map:
+                stats_map[key] = self._init_tuple_stats()
+            self._update_tuple_stats(stats_map[key], pnl_float)
+
+        for tuple_key, stats in stats_map.items():
+            finalized = self._finalize_tuple_stats(stats)
+            if int(finalized.get("n", 0) or 0) < 3:
+                continue
+            symbol, entry_reason, regime = self._split_tuple_key(tuple_key)
+            self._evaluate_champion_tuple(symbol=symbol, entry_reason=entry_reason, regime=regime)
+
+    def _get_stealth_profile(
+        self,
+        symbol: str,
+        entry_reason: str,
+        regime: str,
+        champion_level: float,
+    ) -> Dict[str, Any]:
+        tuple_key = self._tuple_key(symbol, entry_reason, regime)
+        now_ts = time.time()
+        bucket = int(now_ts // self.stealth_bucket_seconds)
+        seed_input = f"{self.stealth_seed_salt}|{tuple_key}|{bucket}"
+        seed_hash = hashlib.sha256(seed_input.encode("utf-8")).hexdigest()
+        seed_int = int(seed_hash[:16], 16)
+        rng = random.Random(seed_int)
+        time_jitter_ms = 0
+        size_jitter_mult = 1.0
+        jitter_pct = self.stealth_size_jitter_pct
+        if champion_level > 1.0:
+            jitter_pct += self.stealth_champion_extra_size_jitter_pct
+        jitter_pct = max(0.0, min(0.35, jitter_pct))
+        if self.stealth_mode_enabled:
+            if self.stealth_time_jitter_ms_max > 0:
+                time_jitter_ms = int(rng.uniform(0.0, float(self.stealth_time_jitter_ms_max)))
+            if jitter_pct > 0.0:
+                size_jitter_mult = 1.0 + rng.uniform(-jitter_pct, jitter_pct)
+        return {
+            "tuple_key": tuple_key,
+            "bucket": bucket,
+            "time_jitter_ms": time_jitter_ms,
+            "size_jitter_mult": size_jitter_mult,
+            "jitter_pct": jitter_pct,
+        }
 
     def _cleanup_symbol_quarantine(self, now: Optional[float] = None) -> None:
         now_ts = now if now is not None else time.time()
@@ -2067,6 +2559,52 @@ class SDMTradingEngine:
                     )
                     continue
 
+                champion_quarantine_until_ms = int(proposed_action.get("champion_quarantine_until_ms", 0) or 0)
+                if bool(proposed_action.get("champion_quarantined")):
+                    block_meta = {
+                        "tuple_key": proposed_action.get("champion_tuple_key"),
+                        "level": proposed_action.get("champion_level", 1.0),
+                        "quarantine_until_ms": champion_quarantine_until_ms,
+                    }
+                    logger.warning(
+                        "CHAMPION_QUARANTINE_BLOCK symbol={} entry_reason={} regime={} tuple={} until_ms={}",
+                        symbol,
+                        action_reason,
+                        action_regime,
+                        proposed_action.get("champion_tuple_key"),
+                        champion_quarantine_until_ms,
+                    )
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": action_regime,
+                            "signal": action_reason,
+                            "entry_reason": action_reason,
+                            "confidence": proposed_action.get("confidence", 0.0),
+                            "straddle_active": False,
+                            "open_positions": open_positions,
+                            "capital": capital,
+                            "champion_quarantine": True,
+                            "champion_meta": block_meta,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "CHAMPION_TUPLE_QUARANTINED",
+                            "champion_meta": block_meta,
+                        },
+                        explanation=(
+                            "HOLD: reason=CHAMPION_TUPLE_QUARANTINED tuple={tuple_key} until_ms={until_ms}"
+                        ).format(
+                            tuple_key=block_meta["tuple_key"],
+                            until_ms=champion_quarantine_until_ms,
+                        ),
+                    )
+                    continue
+
                 self._augment_action_with_risk_metrics(proposed_action)
 
                 # Evaluate action against intent graph
@@ -2371,6 +2909,7 @@ class SDMTradingEngine:
             )
 
         size_scale = 1.0
+        size_scale_pre_stealth = 1.0
         if probe_mode:
             size_scale *= self.probe_size_multiplier
             logger.info(
@@ -2386,32 +2925,104 @@ class SDMTradingEngine:
         entry_meta.setdefault("regime", regime_str)
         entry_meta.setdefault("probe_mode", probe_mode)
 
+        champion_level = 1.00
+        champion_multiplier = 1.00
         champion_scale_applied = False
-        champion_tuple_ready = bool(self.champion_symbol and self.champion_entry_reason and self.champion_regime)
-        if self.champion_tuple_enabled:
-            if not champion_tuple_ready:
-                if not self._champion_tuple_warned_incomplete:
-                    logger.warning(
-                        "CHAMPION_SCALE_SKIPPED reason=incomplete_tuple symbol={} entry_reason={} regime={}",
-                        self.champion_symbol or "<empty>",
-                        self.champion_entry_reason or "<empty>",
-                        self.champion_regime or "<empty>",
-                    )
-                    self._champion_tuple_warned_incomplete = True
-            else:
-                champion_symbol_ok = symbol_l == self.champion_symbol
-                champion_reason_ok = signal_reason == self.champion_entry_reason
-                champion_regime_ok = regime_str_l == self.champion_regime
-                if champion_symbol_ok and champion_reason_ok and champion_regime_ok:
-                    size_scale *= self.champion_size_multiplier
-                    champion_scale_applied = True
-                    logger.info(
-                        "CHAMPION_SCALE_APPLIED=1 symbol={} reason={} regime={} multiplier={:.3f}",
-                        symbol,
-                        signal_reason,
-                        regime_str,
-                        self.champion_size_multiplier,
-                    )
+        champion_quarantined = False
+        champion_quarantine_until_ms = 0
+        champion_tuple_key = self._tuple_key(symbol, signal_reason, regime_str)
+
+        if self.champion_ladder_enabled:
+            champion_eval = self._evaluate_champion_tuple(
+                symbol=symbol,
+                entry_reason=signal_reason,
+                regime=regime_str,
+            )
+            champion_level = float(champion_eval.get("level", 1.0) or 1.0)
+            champion_multiplier = float(champion_eval.get("multiplier", 1.0) or 1.0)
+            champion_quarantined = bool(champion_eval.get("quarantine_active"))
+            champion_quarantine_until_ms = int(champion_eval.get("quarantine_until_ms", 0) or 0)
+            champion_tuple_key = str(champion_eval.get("tuple_key") or champion_tuple_key)
+            if not champion_quarantined and champion_multiplier > 1.0:
+                size_scale *= champion_multiplier
+                champion_scale_applied = True
+                logger.info(
+                    "CHAMPION_APPLIED tuple={} level={:.2f} multiplier={:.2f}",
+                    champion_tuple_key,
+                    champion_level,
+                    champion_multiplier,
+                )
+        else:
+            champion_tuple_ready = bool(self.champion_symbol and self.champion_entry_reason and self.champion_regime)
+            if self.champion_tuple_enabled:
+                if not champion_tuple_ready:
+                    if not self._champion_tuple_warned_incomplete:
+                        logger.warning(
+                            "CHAMPION_SCALE_SKIPPED reason=incomplete_tuple symbol={} entry_reason={} regime={}",
+                            self.champion_symbol or "<empty>",
+                            self.champion_entry_reason or "<empty>",
+                            self.champion_regime or "<empty>",
+                        )
+                        self._champion_tuple_warned_incomplete = True
+                else:
+                    champion_symbol_ok = symbol_l == self.champion_symbol
+                    champion_reason_ok = signal_reason == self.champion_entry_reason
+                    champion_regime_ok = regime_str_l == self.champion_regime
+                    if champion_symbol_ok and champion_reason_ok and champion_regime_ok:
+                        size_scale *= self.champion_size_multiplier
+                        champion_multiplier = self.champion_size_multiplier
+                        champion_level = champion_multiplier
+                        champion_scale_applied = True
+                        logger.info(
+                            "CHAMPION_SCALE_APPLIED=1 symbol={} reason={} regime={} multiplier={:.3f}",
+                            symbol,
+                            signal_reason,
+                            regime_str,
+                            self.champion_size_multiplier,
+                        )
+
+        size_scale_pre_stealth = size_scale
+        stealth_profile = self._get_stealth_profile(
+            symbol=symbol,
+            entry_reason=signal_reason,
+            regime=regime_str,
+            champion_level=champion_level,
+        )
+        if self.stealth_mode_enabled:
+            size_scale *= float(stealth_profile.get("size_jitter_mult", 1.0) or 1.0)
+
+        unclamped_size_scale = size_scale
+        size_scale = max(self.stealth_min_size_scale, min(self.stealth_max_size_scale, size_scale))
+        if probe_mode and size_scale > self.probe_size_multiplier:
+            size_scale = self.probe_size_multiplier
+        if abs(size_scale - unclamped_size_scale) > 1e-9:
+            logger.info(
+                "SIZE_SCALE_CLAMPED symbol={} tuple={} pre={:.4f} post={:.4f} probe_mode={}",
+                symbol,
+                champion_tuple_key,
+                unclamped_size_scale,
+                size_scale,
+                probe_mode,
+            )
+        logger.info(
+            "STEALTH_APPLIED symbol={} tuple={} time_jitter_ms={} size_jitter_mult={:.4f} final_size_scale={:.4f}",
+            symbol,
+            stealth_profile.get("tuple_key"),
+            int(stealth_profile.get("time_jitter_ms", 0) or 0),
+            float(stealth_profile.get("size_jitter_mult", 1.0) or 1.0),
+            size_scale,
+        )
+
+        entry_meta["champion_tuple_key"] = champion_tuple_key
+        entry_meta["champion_level"] = champion_level
+        entry_meta["champion_multiplier"] = champion_multiplier
+        entry_meta["champion_quarantined"] = champion_quarantined
+        entry_meta["champion_quarantine_until_ms"] = champion_quarantine_until_ms
+        entry_meta["stealth_bucket"] = stealth_profile.get("bucket")
+        entry_meta["stealth_time_jitter_ms"] = stealth_profile.get("time_jitter_ms")
+        entry_meta["stealth_size_jitter_mult"] = stealth_profile.get("size_jitter_mult")
+        entry_meta["size_scale_pre_stealth"] = size_scale_pre_stealth
+        entry_meta["size_scale_post_stealth"] = size_scale
 
         balance_value = float(context.get('balance') or 0.0)
         position_value = balance_value * position_size_pct * size_scale
@@ -2506,7 +3117,17 @@ class SDMTradingEngine:
             'probe_mode': probe_mode,
             'probe_symbol_allowlist': sorted(self.probe_override_allowlist),
             'size_scale': size_scale,
+            'size_scale_pre_stealth': size_scale_pre_stealth,
+            'stealth_mode_applied': self.stealth_mode_enabled,
+            'stealth_bucket': stealth_profile.get("bucket"),
+            'stealth_time_jitter_ms': int(stealth_profile.get("time_jitter_ms", 0) or 0),
+            'stealth_size_jitter_mult': float(stealth_profile.get("size_jitter_mult", 1.0) or 1.0),
             'champion_scale_applied': champion_scale_applied,
+            'champion_tuple_key': champion_tuple_key,
+            'champion_level': champion_level,
+            'champion_multiplier': champion_multiplier,
+            'champion_quarantined': champion_quarantined,
+            'champion_quarantine_until_ms': champion_quarantine_until_ms,
             'gates_evaluated': probe_gates,
             'gate_thresholds': probe_thresholds,
             'vol_bucket': probe_vol_bucket,
@@ -2518,7 +3139,7 @@ class SDMTradingEngine:
         strategy_explanation = (
             "Eval: regime={regime}, mom={mom}, rsi={rsi}, atr={atr}; "
             "entry_reason={reason} selected_action={direction} conf={conf} over=HOLD; "
-            "probe={probe} scale={scale} champion={champion}; "
+            "probe={probe} scale={scale} champion={champion} level={champion_level}; "
             "gates={gates} thresholds={thresholds} risk_headroom={risk_headroom}."
         ).format(
             regime=regime_str,
@@ -2531,6 +3152,7 @@ class SDMTradingEngine:
             probe=probe_mode,
             scale=f"{size_scale:.3f}",
             champion=champion_scale_applied,
+            champion_level=f"{champion_level:.2f}",
             gates=probe_gates,
             thresholds=probe_thresholds,
             risk_headroom=risk_headroom,
@@ -2558,7 +3180,17 @@ class SDMTradingEngine:
                 "probe_mode": probe_mode,
                 "probe_symbol_allowlist": sorted(self.probe_override_allowlist),
                 "size_scale": size_scale,
+                "size_scale_pre_stealth": size_scale_pre_stealth,
+                "stealth_mode_applied": self.stealth_mode_enabled,
+                "stealth_bucket": stealth_profile.get("bucket"),
+                "stealth_time_jitter_ms": int(stealth_profile.get("time_jitter_ms", 0) or 0),
+                "stealth_size_jitter_mult": float(stealth_profile.get("size_jitter_mult", 1.0) or 1.0),
                 "champion_scale_applied": champion_scale_applied,
+                "champion_tuple_key": champion_tuple_key,
+                "champion_level": champion_level,
+                "champion_multiplier": champion_multiplier,
+                "champion_quarantined": champion_quarantined,
+                "champion_quarantine_until_ms": champion_quarantine_until_ms,
                 "gates_evaluated": probe_gates,
                 "thresholds": probe_thresholds,
                 "vol_bucket": probe_vol_bucket,
@@ -2582,6 +3214,10 @@ class SDMTradingEngine:
                 "size_scale": size_scale,
                 "probe_mode": probe_mode,
                 "champion_scale_applied": champion_scale_applied,
+                "champion_level": champion_level,
+                "champion_multiplier": champion_multiplier,
+                "stealth_time_jitter_ms": int(stealth_profile.get("time_jitter_ms", 0) or 0),
+                "stealth_size_jitter_mult": float(stealth_profile.get("size_jitter_mult", 1.0) or 1.0),
             },
             explanation=strategy_explanation
         )
@@ -2860,6 +3496,13 @@ class SDMTradingEngine:
                 "probe_mode": action.get("probe_mode"),
                 "size_scale": action.get("size_scale"),
                 "champion_scale_applied": action.get("champion_scale_applied"),
+                "champion_tuple_key": action.get("champion_tuple_key"),
+                "champion_level": action.get("champion_level"),
+                "champion_quarantined": action.get("champion_quarantined"),
+                "champion_quarantine_until_ms": action.get("champion_quarantine_until_ms"),
+                "stealth_mode_applied": action.get("stealth_mode_applied"),
+                "stealth_time_jitter_ms": action.get("stealth_time_jitter_ms"),
+                "stealth_size_jitter_mult": action.get("stealth_size_jitter_mult"),
                 "gates_evaluated": action.get("gates_evaluated"),
                 "thresholds": action.get("gate_thresholds"),
                 "vol_bucket": action.get("vol_bucket"),
@@ -3025,6 +3668,13 @@ class SDMTradingEngine:
                     "probe_mode": action.get("probe_mode"),
                     "size_scale": action.get("size_scale"),
                     "champion_scale_applied": action.get("champion_scale_applied"),
+                    "champion_tuple_key": action.get("champion_tuple_key"),
+                    "champion_level": action.get("champion_level"),
+                    "champion_quarantined": action.get("champion_quarantined"),
+                    "champion_quarantine_until_ms": action.get("champion_quarantine_until_ms"),
+                    "stealth_mode_applied": action.get("stealth_mode_applied"),
+                    "stealth_time_jitter_ms": action.get("stealth_time_jitter_ms"),
+                    "stealth_size_jitter_mult": action.get("stealth_size_jitter_mult"),
                     "selected_over": selected_over,
                     "order_params": order_params,
                     "gate_results": gate_results,
@@ -3065,6 +3715,12 @@ class SDMTradingEngine:
 
                 self.journal.log_decision(decision)
                 return
+
+            stealth_delay_ms = int(action.get("stealth_time_jitter_ms", 0) or 0)
+            if self.stealth_mode_enabled and stealth_delay_ms > 0:
+                bounded_delay_ms = min(stealth_delay_ms, self.stealth_time_jitter_ms_max)
+                if bounded_delay_ms > 0:
+                    time.sleep(float(bounded_delay_ms) / 1000.0)
 
             # Gates passed - execute or simulate
             if self.dry_run_mode:
