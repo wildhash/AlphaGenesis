@@ -664,6 +664,15 @@ class SDMTradingEngine:
         self.symbol_quarantine_seconds = max(60, int(os.getenv("SYMBOL_40015_QUARANTINE_SECONDS", "1800")))
         self.error_count_40015: Dict[str, List[float]] = defaultdict(list)
         self.quarantine_symbols: Dict[str, float] = {}
+        self.bnb_tactical_quarantine_enabled = os.getenv("BNB_TACTICAL_QUARANTINE_ENABLED", "true").lower() == "true"
+        self.bnb_tactical_symbol = self._normalize_symbol(os.getenv("BNB_TACTICAL_SYMBOL", "cmt_bnbusdt"))
+        self.bnb_tactical_lookback_seconds = max(300, int(os.getenv("BNB_TACTICAL_LOOKBACK_SECONDS", "3600")))
+        self.bnb_tactical_pnl_threshold = float(os.getenv("BNB_TACTICAL_PNL_THRESHOLD", "-1.5"))
+        self.bnb_tactical_quarantine_seconds = max(300, int(os.getenv("BNB_TACTICAL_QUARANTINE_SECONDS", "3600")))
+        self.bnb_tactical_check_interval_seconds = max(60, int(os.getenv("BNB_TACTICAL_CHECK_INTERVAL_SECONDS", "300")))
+        self.bnb_tactical_quarantine_until = 0.0
+        self.bnb_tactical_last_eval_ts = 0.0
+        self.bnb_tactical_last_pnl = 0.0
 
         # Aggressive straddle controls (competition tuning)
         self.stop_new_if_pnl_under = -0.06
@@ -729,6 +738,14 @@ class SDMTradingEngine:
         self.max_active_symbols = 8
         self.symbols = self.tier_a_pairs + self.tier_b_pairs + self.tier_c_pairs
         self.active_symbols = list(self.symbols)
+        if self.bnb_tactical_quarantine_enabled and self.bnb_tactical_symbol:
+            logger.info(
+                "BNB_TACTICAL_QUARANTINE_ENABLED symbol={} lookback_s={} threshold={} quarantine_s={}",
+                self.bnb_tactical_symbol,
+                self.bnb_tactical_lookback_seconds,
+                self.bnb_tactical_pnl_threshold,
+                self.bnb_tactical_quarantine_seconds,
+            )
         if abs(self.champion_size_multiplier - champion_size_parsed) > 1e-9:
             logger.warning(
                 "CHAMPION_SIZE_MULTIPLIER_CLAMPED raw={} clamped={:.3f}",
@@ -798,6 +815,98 @@ class SDMTradingEngine:
             logger.warning("SYMBOL_QUARANTINED_BLOCK symbol={} until={}", sym, int(float(until)))
             return True
         return False
+
+    def _get_bnb_tactical_quarantine_until(self) -> float:
+        return float(self.bnb_tactical_quarantine_until or 0.0)
+
+    def _symbol_realized_pnl_lookback(self, symbol: str, lookback_seconds: int) -> tuple[float, int]:
+        symbol_norm = self._normalize_symbol(symbol)
+        if not symbol_norm:
+            return 0.0, 0
+
+        cutoff_ts = time.time() - max(60, int(lookback_seconds))
+        lookback_hours = max(1, int((max(60, int(lookback_seconds)) + 3599) // 3600))
+        pnl_sum = 0.0
+        trades_count = 0
+
+        try:
+            recent = self.position_ledger.get_recent_closed_trades(hours=lookback_hours, limit=4000)
+            for trade in recent:
+                trade_symbol = self._normalize_symbol(getattr(trade, "symbol", None))
+                if trade_symbol != symbol_norm:
+                    continue
+                try:
+                    close_ts = float(getattr(trade, "close_time", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if close_ts < cutoff_ts:
+                    continue
+                close_reason = str(getattr(trade, "close_reason", "") or "").strip().lower()
+                if close_reason == "exchange_flat_detected":
+                    continue
+                try:
+                    pnl_val = float(getattr(trade, "realized_pnl", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                pnl_sum += pnl_val
+                trades_count += 1
+        except Exception as exc:
+            logger.warning("BNB_TACTICAL_PNL_QUERY_FAILED symbol={} err={}", symbol_norm, exc)
+
+        return pnl_sum, trades_count
+
+    def _evaluate_bnb_tactical_quarantine(self, force: bool = False) -> None:
+        if not self.bnb_tactical_quarantine_enabled or not self.bnb_tactical_symbol:
+            return
+
+        now_ts = time.time()
+        if self.bnb_tactical_quarantine_until and now_ts >= float(self.bnb_tactical_quarantine_until):
+            self.bnb_tactical_quarantine_until = 0.0
+            logger.info("BNB_TACTICAL_QUARANTINE_EXPIRED symbol={}", self.bnb_tactical_symbol)
+
+        if not force and (now_ts - float(self.bnb_tactical_last_eval_ts or 0.0)) < self.bnb_tactical_check_interval_seconds:
+            return
+
+        self.bnb_tactical_last_eval_ts = now_ts
+        pnl_sum, trades_count = self._symbol_realized_pnl_lookback(
+            self.bnb_tactical_symbol,
+            self.bnb_tactical_lookback_seconds,
+        )
+        self.bnb_tactical_last_pnl = pnl_sum
+        if trades_count <= 0:
+            return
+
+        if pnl_sum <= self.bnb_tactical_pnl_threshold:
+            new_until = now_ts + self.bnb_tactical_quarantine_seconds
+            if new_until > float(self.bnb_tactical_quarantine_until or 0.0):
+                self.bnb_tactical_quarantine_until = new_until
+                logger.warning(
+                    "BNB_TACTICAL_QUARANTINE_ACTIVATED symbol={} pnl_lookback={:.4f} trades={} lookback_s={} threshold={} until={}",
+                    self.bnb_tactical_symbol,
+                    pnl_sum,
+                    trades_count,
+                    self.bnb_tactical_lookback_seconds,
+                    self.bnb_tactical_pnl_threshold,
+                    int(new_until),
+                )
+
+    def _is_bnb_tactically_quarantined(self, symbol: str) -> bool:
+        if not self.bnb_tactical_quarantine_enabled:
+            return False
+        symbol_norm = self._normalize_symbol(symbol)
+        if not symbol_norm or symbol_norm != self.bnb_tactical_symbol:
+            return False
+        until_ts = float(self.bnb_tactical_quarantine_until or 0.0)
+        now_ts = time.time()
+        if until_ts <= 0 or now_ts >= until_ts:
+            return False
+        logger.warning(
+            "BNB_TACTICAL_QUARANTINE_BLOCKED symbol={} until={} pnl_lookback={:.4f}",
+            symbol_norm,
+            int(until_ts),
+            self.bnb_tactical_last_pnl,
+        )
+        return True
 
     def _register_40015_error(self, symbol: str, error_code: Any, error_msg: Any, source: str = "entry_order") -> bool:
         code_text = "" if error_code is None else str(error_code)
@@ -895,6 +1004,7 @@ class SDMTradingEngine:
                 self.iteration += 1
                 timestamp = datetime.now()
                 self._cleanup_symbol_quarantine()
+                self._evaluate_bnb_tactical_quarantine()
 
                 if self.loser_kill_switch_enabled:
                     new_blocks = self.loser_kill_switch.refresh(position_ledger=self.position_ledger)
@@ -1775,6 +1885,43 @@ class SDMTradingEngine:
                     )
                     continue
 
+                if self._is_bnb_tactically_quarantined(symbol):
+                    quarantine_until = self._get_bnb_tactical_quarantine_until()
+                    open_positions = len(self.position_ledger.get_all_positions())
+                    capital = self.current_capital
+                    logger.info(
+                        "DIAG_LOOP_SKIP symbol={} reason=bnb_tactical_quarantined until={}",
+                        symbol,
+                        int(float(quarantine_until or 0.0)),
+                    )
+                    self._emit_ai_log(
+                        stage="Decision Making",
+                        model="AlphaGenesis-SDM-v1",
+                        input_payload={
+                            "symbol": symbol,
+                            "regime": None,
+                            "signal": None,
+                            "confidence": 0.0,
+                            "bnb_tactical_quarantined": True,
+                            "bnb_quarantine_until": quarantine_until,
+                            "bnb_pnl_lookback": self.bnb_tactical_last_pnl,
+                            "open_positions": open_positions,
+                            "capital": capital,
+                        },
+                        output_payload={
+                            "action": "HOLD",
+                            "reason": "BNB_TACTICAL_QUARANTINED",
+                        },
+                        explanation=(
+                            "HOLD: bnb_tactical_quarantined=True, "
+                            f"quarantine_until={int(float(quarantine_until or 0.0))}, "
+                            f"bnb_pnl_lookback={self.bnb_tactical_last_pnl:.4f}, "
+                            f"open_positions={open_positions}, capital=${capital:.2f}, "
+                            "reason=BNB_TACTICAL_QUARANTINED"
+                        ),
+                    )
+                    continue
+
                 # Determine market regime
                 regime = self._detect_regime_for_symbol(symbol)
 
@@ -2494,6 +2641,15 @@ class SDMTradingEngine:
             if self.diagnostic_suspend_active:
                 self._log_diagnostic_status()
                 logger.warning("🟠 DIAGNOSTIC_SUSPEND - blocking order execution for {}", symbol)
+                return
+
+            self._evaluate_bnb_tactical_quarantine()
+            if self._is_bnb_tactically_quarantined(symbol):
+                logger.warning(
+                    "BNB_TACTICAL_QUARANTINE_BLOCKED symbol={} until={} stage=execute_action",
+                    symbol,
+                    int(self._get_bnb_tactical_quarantine_until()),
+                )
                 return
 
             if self._is_symbol_quarantined(symbol):
