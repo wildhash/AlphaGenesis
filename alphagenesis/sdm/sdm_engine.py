@@ -412,6 +412,283 @@ class LoserTupleKillSwitch:
         return new_blocks
 
 
+class ReasonRegimeQuarantine:
+    """Quarantine weak (entry_reason, regime) keys across symbols for a cooldown window."""
+
+    def __init__(
+        self,
+        state_path: str,
+        lookback_hours: int = 6,
+        min_trades: int = 6,
+        max_total_pnl: float = -10.0,
+        quarantine_seconds: int = 5400,
+        refresh_interval_seconds: int = 120,
+        allow_keys_csv: str = "",
+    ):
+        self.state_path = state_path
+        self.lookback_hours = max(1, int(lookback_hours))
+        self.min_trades = max(1, int(min_trades))
+        self.max_total_pnl = float(max_total_pnl)
+        self.quarantine_seconds = max(60, int(quarantine_seconds))
+        self.refresh_interval_seconds = max(30, int(refresh_interval_seconds))
+        self.last_refresh_ts = 0.0
+        self.allow_reason_keys = {
+            str(k).strip().lower()
+            for k in str(allow_keys_csv or "").split(",")
+            if str(k).strip()
+        }
+        self.active_keys: Dict[str, Dict[str, Any]] = {}
+        self._load_state()
+
+    def _normalize_reason(self, value: Any) -> str:
+        if value is None:
+            return "LEGACY_NONE"
+        reason = str(value).strip()
+        return reason if reason else "LEGACY_NONE"
+
+    def _normalize_regime(self, value: Any) -> str:
+        if value is None:
+            return "unknown"
+        regime = str(value).strip().lower()
+        return regime if regime else "unknown"
+
+    def _reason_key(self, entry_reason: Any, regime: Any) -> str:
+        return f"{self._normalize_reason(entry_reason)}|{self._normalize_regime(regime)}"
+
+    def _reason_key_lower(self, entry_reason: Any, regime: Any) -> str:
+        return self._reason_key(entry_reason, regime).lower()
+
+    def _is_tracked_key(self, key_lower: str) -> bool:
+        if not self.allow_reason_keys:
+            return True
+        return key_lower in self.allow_reason_keys
+
+    def _obj_get(self, obj: Any, key: str, default: Any = None) -> Any:
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _load_state(self) -> None:
+        try:
+            if not os.path.exists(self.state_path):
+                return
+            with open(self.state_path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            if isinstance(data, dict):
+                active = data.get("active_keys")
+                if isinstance(active, dict):
+                    self.active_keys = active
+        except Exception as exc:
+            logger.warning("REASON_QUARANTINE_STATE_LOAD_FAILED path={} err={}", self.state_path, exc)
+
+    def _save_state(self) -> None:
+        try:
+            tmp_path = f"{self.state_path}.tmp"
+            payload = {
+                "updated_at_ms": int(time.time() * 1000),
+                "active_keys": self.active_keys,
+            }
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh, ensure_ascii=True, separators=(",", ":"))
+            os.replace(tmp_path, self.state_path)
+        except Exception as exc:
+            logger.warning("REASON_QUARANTINE_STATE_SAVE_FAILED path={} err={}", self.state_path, exc)
+
+    def active_count(self) -> int:
+        now_ms = int(time.time() * 1000)
+        return sum(1 for meta in self.active_keys.values() if int(meta.get("quarantine_until_ms", 0) or 0) > now_ms)
+
+    def is_quarantined(self, entry_reason: Any, regime: Any) -> bool:
+        key_lower = self._reason_key_lower(entry_reason, regime)
+        meta = self.active_keys.get(key_lower)
+        if not meta:
+            return False
+        now_ms = int(time.time() * 1000)
+        until_ms = int(meta.get("quarantine_until_ms", 0) or 0)
+        if until_ms <= now_ms:
+            self.active_keys.pop(key_lower, None)
+            self._save_state()
+            return False
+        return True
+
+    def get_meta(self, entry_reason: Any, regime: Any) -> Dict[str, Any]:
+        return self.active_keys.get(self._reason_key_lower(entry_reason, regime), {})
+
+    def _ingest_from_ledger(self, position_ledger: Any, cutoff_ts: float) -> Dict[str, Dict[str, Any]]:
+        stats: Dict[str, Dict[str, Any]] = defaultdict(
+            lambda: {
+                "entry_reason": "LEGACY_NONE",
+                "entry_regime": "unknown",
+                "n": 0,
+                "wins": 0,
+                "total_pnl": 0.0,
+            }
+        )
+        min_abs_pnl = max(
+            0.0,
+            float(os.getenv("REASON_QUARANTINE_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001"))),
+        )
+
+        if position_ledger is None:
+            return stats
+
+        if hasattr(position_ledger, "get_recent_closed_trades"):
+            trades = position_ledger.get_recent_closed_trades(hours=self.lookback_hours, limit=5000)
+        elif hasattr(position_ledger, "get_closed_trades"):
+            trades = position_ledger.get_closed_trades(limit=5000)
+        else:
+            return stats
+
+        for trade in trades:
+            close_time = self._obj_get(trade, "close_time")
+            try:
+                if close_time is not None and float(close_time) < cutoff_ts:
+                    continue
+            except (TypeError, ValueError):
+                continue
+
+            close_reason = str(self._obj_get(trade, "close_reason") or "").strip().lower()
+            if close_reason == "exchange_flat_detected":
+                continue
+
+            entry_reason = self._obj_get(trade, "entry_reason")
+            entry_regime = self._obj_get(trade, "entry_regime")
+            key = self._reason_key(entry_reason, entry_regime)
+            key_lower = key.lower()
+            if not self._is_tracked_key(key_lower):
+                continue
+
+            entry_reason_norm = self._normalize_reason(entry_reason).lower()
+            regime_norm = self._normalize_regime(entry_regime).lower()
+            if close_reason == "exchange_closed" and entry_reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+                continue
+
+            pnl_value = self._obj_get(trade, "realized_pnl")
+            fees_estimated = self._obj_get(trade, "fees_estimated", 0.0)
+            pnl_is_net = bool(self._obj_get(trade, "pnl_is_net", False))
+            if pnl_value is None:
+                continue
+            try:
+                pnl_float = float(pnl_value)
+            except (TypeError, ValueError):
+                continue
+            try:
+                fees_float = float(fees_estimated or 0.0)
+            except (TypeError, ValueError):
+                fees_float = 0.0
+            if not pnl_is_net:
+                pnl_float -= fees_float
+            if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+                continue
+
+            st = stats[key_lower]
+            st["entry_reason"] = self._normalize_reason(entry_reason)
+            st["entry_regime"] = self._normalize_regime(entry_regime)
+            st["n"] += 1
+            st["total_pnl"] += pnl_float
+            if pnl_float > 0:
+                st["wins"] += 1
+
+        return stats
+
+    def refresh(self, force: bool = False, position_ledger: Optional[Any] = None) -> int:
+        now = time.time()
+        if not force and (now - self.last_refresh_ts) < self.refresh_interval_seconds:
+            return 0
+        self.last_refresh_ts = now
+        now_ms = int(now * 1000)
+        cutoff_ts = now - (self.lookback_hours * 3600)
+
+        state_changed = False
+        # Drop expired quarantines first.
+        for key_lower, meta in list(self.active_keys.items()):
+            until_ms = int(meta.get("quarantine_until_ms", 0) or 0)
+            if until_ms <= now_ms:
+                self.active_keys.pop(key_lower, None)
+                state_changed = True
+
+        try:
+            stats = self._ingest_from_ledger(position_ledger, cutoff_ts)
+        except Exception as exc:
+            logger.warning("REASON_QUARANTINE_REFRESH_FAILED err={}", exc)
+            if state_changed:
+                self._save_state()
+            return 0
+
+        new_blocks = 0
+        tracked_keys = set(stats.keys())
+        if self.allow_reason_keys:
+            tracked_keys |= set(self.allow_reason_keys)
+
+        for key_lower in sorted(tracked_keys):
+            st = stats.get(key_lower, {})
+            reason_norm = st.get("entry_reason") or (key_lower.split("|", 1)[0] if "|" in key_lower else key_lower)
+            regime_norm = st.get("entry_regime") or (key_lower.split("|", 1)[1] if "|" in key_lower else "unknown")
+            n = int(st.get("n", 0) or 0)
+            wins = int(st.get("wins", 0) or 0)
+            win_rate = (float(wins) / float(n)) if n > 0 else 0.0
+            total_pnl = float(st.get("total_pnl", 0.0) or 0.0)
+            meta = self.active_keys.get(key_lower)
+            until_ms = int((meta or {}).get("quarantine_until_ms", 0) or 0)
+            active = until_ms > now_ms
+
+            decision = "hold"
+            should_quarantine = n >= self.min_trades and total_pnl <= self.max_total_pnl
+            if should_quarantine:
+                new_until_ms = now_ms + (self.quarantine_seconds * 1000)
+                prev_until_ms = until_ms
+                if new_until_ms > prev_until_ms:
+                    self.active_keys[key_lower] = {
+                        "entry_reason": reason_norm,
+                        "entry_regime": regime_norm,
+                        "n": n,
+                        "win_rate": round(win_rate, 6),
+                        "total_pnl": round(total_pnl, 6),
+                        "blocked_at_ms": now_ms,
+                        "quarantine_until_ms": new_until_ms,
+                        "last_eval_ms": now_ms,
+                    }
+                    state_changed = True
+                    if prev_until_ms <= now_ms:
+                        new_blocks += 1
+                    logger.error(
+                        "REASON_QUARANTINED key={} until_ms={} reason=net_pnl_breach n={} net_pnl={:.4f}",
+                        key_lower,
+                        new_until_ms,
+                        n,
+                        total_pnl,
+                    )
+                    active = True
+                    until_ms = new_until_ms
+                decision = "quarantine_set"
+            elif active:
+                decision = "quarantine_active"
+
+            if n > 0 or active:
+                logger.info(
+                    "REASON_QUARANTINE_EVAL key={} n={} win_rate={:.3f} net_pnl={:.4f} decision={}",
+                    key_lower,
+                    n,
+                    win_rate,
+                    total_pnl,
+                    decision,
+                )
+
+            # Touch active state with latest observed metrics while still active.
+            if active and key_lower in self.active_keys:
+                self.active_keys[key_lower]["last_eval_ms"] = now_ms
+                if n > 0:
+                    self.active_keys[key_lower]["n"] = n
+                    self.active_keys[key_lower]["win_rate"] = round(win_rate, 6)
+                    self.active_keys[key_lower]["total_pnl"] = round(total_pnl, 6)
+                state_changed = True
+
+        if state_changed:
+            self._save_state()
+
+        return new_blocks
+
+
 # SDM Components
 from .intent_graph import IntentGraph, Intent, IntentType
 from .semantic_binding import SemanticBindingLayer, ModelType, MarketRegime
@@ -664,6 +941,21 @@ class SDMTradingEngine:
         self.max_40015_errors = max(1, int(os.getenv("SYMBOL_40015_MAX_ERRORS", "3")))
         self.error40015_window_seconds = max(60, int(os.getenv("SYMBOL_40015_WINDOW_SECONDS", "600")))
         self.symbol_quarantine_seconds = max(60, int(os.getenv("SYMBOL_40015_QUARANTINE_SECONDS", "1800")))
+        self.reconcile_every_iterations = max(1, int(os.getenv("RECONCILE_EVERY_ITERATIONS", "10")))
+        self.desync_fast_reconcile_enabled = os.getenv("DESYNC_FAST_RECONCILE_ENABLED", "true").lower() == "true"
+        self.desync_fast_reconcile_interval_seconds = max(
+            10, int(os.getenv("DESYNC_FAST_RECONCILE_INTERVAL_SECONDS", "45"))
+        )
+        self.desync_fast_reconcile_window_seconds = max(
+            self.desync_fast_reconcile_interval_seconds,
+            int(os.getenv("DESYNC_FAST_RECONCILE_WINDOW_SECONDS", "600")),
+        )
+        self.desync_fast_reconcile_debounce_seconds = max(
+            5, int(os.getenv("DESYNC_FAST_RECONCILE_DEBOUNCE_SECONDS", "30"))
+        )
+        self.desync_fast_reconcile_until_ts = 0.0
+        self.desync_fast_reconcile_last_ts = 0.0
+        self.desync_fast_reconcile_last_attempt_ts = 0.0
         self.error_count_40015: Dict[str, List[float]] = defaultdict(list)
         self.quarantine_symbols: Dict[str, float] = {}
         self.bnb_tactical_quarantine_enabled = os.getenv("BNB_TACTICAL_QUARANTINE_ENABLED", "true").lower() == "true"
@@ -793,6 +1085,25 @@ class SDMTradingEngine:
                 self.loser_kill_switch.blocked_count(),
                 seeded,
             )
+        self.reason_quarantine_enabled = os.getenv("REASON_QUARANTINE_ENABLED", "false").lower() == "true"
+        self.reason_quarantine: Optional[ReasonRegimeQuarantine] = None
+        if self.reason_quarantine_enabled:
+            self.reason_quarantine = ReasonRegimeQuarantine(
+                state_path=os.getenv("REASON_QUARANTINE_STATE_PATH", "/opt/AlphaGenesis/tmp/reason_quarantine.json"),
+                lookback_hours=int(os.getenv("REASON_QUARANTINE_LOOKBACK_HOURS", "6")),
+                min_trades=int(os.getenv("REASON_QUARANTINE_MIN_TRADES", "6")),
+                max_total_pnl=float(os.getenv("REASON_QUARANTINE_MAX_TOTAL_PNL", "-10.0")),
+                quarantine_seconds=int(os.getenv("REASON_QUARANTINE_SECONDS", "5400")),
+                refresh_interval_seconds=int(os.getenv("REASON_QUARANTINE_REFRESH_SECONDS", "120")),
+                allow_keys_csv=os.getenv("REASON_QUARANTINE_KEYS", ""),
+            )
+            seeded_reason = self.reason_quarantine.refresh(force=True, position_ledger=self.position_ledger)
+            logger.warning(
+                "REASON_QUARANTINE_ACTIVE active_total={} new_blocks={} tracked_keys={}",
+                self.reason_quarantine.active_count(),
+                seeded_reason,
+                sorted(self.reason_quarantine.allow_reason_keys),
+            )
         self._startup_champion_ladder_self_check()
 
         self.priority_symbols = list(self.tier_a_pairs)
@@ -807,6 +1118,14 @@ class SDMTradingEngine:
                 self.bnb_tactical_lookback_seconds,
                 self.bnb_tactical_pnl_threshold,
                 self.bnb_tactical_quarantine_seconds,
+            )
+        if self.desync_fast_reconcile_enabled:
+            logger.info(
+                "DESYNC_FAST_RECONCILE_ENABLED interval_s={} window_s={} debounce_s={} periodic_every_iters={}",
+                self.desync_fast_reconcile_interval_seconds,
+                self.desync_fast_reconcile_window_seconds,
+                self.desync_fast_reconcile_debounce_seconds,
+                self.reconcile_every_iterations,
             )
         if abs(self.champion_size_multiplier - champion_size_parsed) > 1e-9:
             logger.warning(
@@ -1442,6 +1761,54 @@ class SDMTradingEngine:
         )
         return True
 
+    def _mark_desync_active(self, reason: str, symbol: Optional[str] = None) -> None:
+        if not self.desync_fast_reconcile_enabled:
+            return
+        now_ts = time.time()
+        new_until = now_ts + self.desync_fast_reconcile_window_seconds
+        if new_until > float(self.desync_fast_reconcile_until_ts or 0.0):
+            self.desync_fast_reconcile_until_ts = new_until
+            logger.warning(
+                "DESYNC_FAST_RECONCILE_ARMED reason={} symbol={} until={} window_s={}",
+                str(reason or "unknown"),
+                symbol or "-",
+                int(new_until),
+                self.desync_fast_reconcile_window_seconds,
+            )
+
+    def _clear_desync_active(self, source: str = "unknown") -> None:
+        if not self.desync_fast_reconcile_enabled:
+            return
+        if float(self.desync_fast_reconcile_until_ts or 0.0) > 0.0:
+            logger.info("DESYNC_FAST_RECONCILE_CLEARED source={}", source)
+        self.desync_fast_reconcile_until_ts = 0.0
+
+    def _maybe_fast_reconcile(self, trigger_reason: str = "loop_tick") -> None:
+        if not self.desync_fast_reconcile_enabled:
+            return
+
+        now_ts = time.time()
+        active_until = float(self.desync_fast_reconcile_until_ts or 0.0)
+        if active_until <= now_ts:
+            return
+        if (now_ts - float(self.desync_fast_reconcile_last_attempt_ts or 0.0)) < self.desync_fast_reconcile_debounce_seconds:
+            return
+        if (now_ts - float(self.desync_fast_reconcile_last_ts or 0.0)) < self.desync_fast_reconcile_interval_seconds:
+            return
+
+        self.desync_fast_reconcile_last_attempt_ts = now_ts
+        remaining_s = max(0, int(active_until - now_ts))
+        logger.info(
+            "DESYNC_FAST_RECONCILE_TICK reason={} remaining_s={} interval_s={}",
+            trigger_reason,
+            remaining_s,
+            self.desync_fast_reconcile_interval_seconds,
+        )
+        ok = self._reconcile_position_ledger(halt_on_failure=False, source="fast_reconcile")
+        self.desync_fast_reconcile_last_ts = now_ts
+        if ok and float(self.desync_fast_reconcile_until_ts or 0.0) <= time.time():
+            self._clear_desync_active(source="fast_reconcile")
+
     def _register_40015_error(self, symbol: str, error_code: Any, error_msg: Any, source: str = "entry_order") -> bool:
         code_text = "" if error_code is None else str(error_code)
         msg_text = "" if error_msg is None else str(error_msg)
@@ -1453,6 +1820,7 @@ class SDMTradingEngine:
         sym = self._normalize_symbol(symbol)
         if not sym:
             return True
+        self._mark_desync_active(reason=f"error_40015:{source}", symbol=sym)
 
         history = [ts for ts in self.error_count_40015.get(sym, []) if (now_ts - ts) <= self.error40015_window_seconds]
         history.append(now_ts)
@@ -1548,6 +1916,17 @@ class SDMTradingEngine:
                             new_blocks,
                             self.loser_kill_switch.blocked_count(),
                         )
+                if self.reason_quarantine_enabled and self.reason_quarantine is not None:
+                    new_reason_blocks = self.reason_quarantine.refresh(position_ledger=self.position_ledger)
+                    if new_reason_blocks > 0:
+                        logger.warning(
+                            "REASON_QUARANTINE_REFRESH new_blocks={} active_total={}",
+                            new_reason_blocks,
+                            self.reason_quarantine.active_count(),
+                        )
+
+                # Opportunistic fast reconcile while desync window is active.
+                self._maybe_fast_reconcile(trigger_reason="loop_tick")
 
                 if self._diag_gate_log_every and self.iteration % self._diag_gate_log_every == 0:
                     counts = self._diag_gate_counts
@@ -1643,9 +2022,9 @@ class SDMTradingEngine:
                 if self.learning_engine.should_adapt():
                     self.learning_engine.adapt(self.intent_graph, self.binding_layer)
 
-                # Step 6: Reconcile position ledger (every 10 iterations)
-                if self.iteration % 10 == 0:
-                    ledger_ok = self._reconcile_position_ledger()
+                # Step 6: Reconcile position ledger (periodic cadence)
+                if self.iteration % self.reconcile_every_iterations == 0:
+                    ledger_ok = self._reconcile_position_ledger(halt_on_failure=True, source="periodic")
                     if not ledger_ok:
                         logger.critical("Ledger reconciliation failed - stopping trading")
                         break
@@ -2602,6 +2981,50 @@ class SDMTradingEngine:
                     )
                     continue
 
+                if self.reason_quarantine_enabled and self.reason_quarantine is not None:
+                    if self.reason_quarantine.is_quarantined(action_reason, action_regime):
+                        block_meta = self.reason_quarantine.get_meta(action_reason, action_regime)
+                        logger.error(
+                            "REASON_QUARANTINE_BLOCK symbol={} entry_reason={} entry_regime={} until_ms={} n={} total_pnl={}",
+                            symbol,
+                            action_reason,
+                            action_regime,
+                            block_meta.get("quarantine_until_ms"),
+                            block_meta.get("n"),
+                            block_meta.get("total_pnl"),
+                        )
+                        open_positions = len(self.position_ledger.get_all_positions())
+                        capital = self.current_capital
+                        self._emit_ai_log(
+                            stage="Decision Making",
+                            model="AlphaGenesis-SDM-v1",
+                            input_payload={
+                                "symbol": symbol,
+                                "regime": action_regime,
+                                "signal": action_reason,
+                                "entry_reason": action_reason,
+                                "confidence": proposed_action.get("confidence", 0.0),
+                                "straddle_active": False,
+                                "open_positions": open_positions,
+                                "capital": capital,
+                                "reason_quarantine": True,
+                                "reason_quarantine_meta": block_meta,
+                            },
+                            output_payload={
+                                "action": "HOLD",
+                                "reason": "REASON_QUARANTINED",
+                                "reason_quarantine_meta": block_meta,
+                            },
+                            explanation=(
+                                "HOLD: reason=REASON_QUARANTINED key={reason}|{regime} meta={meta}"
+                            ).format(
+                                reason=action_reason,
+                                regime=action_regime,
+                                meta=block_meta,
+                            ),
+                        )
+                        continue
+
                 champion_quarantine_until_ms = int(proposed_action.get("champion_quarantine_until_ms", 0) or 0)
                 if bool(proposed_action.get("champion_quarantined")):
                     block_meta = {
@@ -3442,6 +3865,10 @@ class SDMTradingEngine:
 
             if not ledger_approved:
                 logger.warning(f"🚫 LEDGER BLOCKED: {ledger_reason}")
+                ledger_reason_l = str(ledger_reason or "").lower()
+                if "safe mode" in ledger_reason_l or "size mismatch" in ledger_reason_l or "size_mismatch" in ledger_reason_l:
+                    self._mark_desync_active(reason="ledger_safe_mode_block", symbol=symbol)
+                    self._maybe_fast_reconcile(trigger_reason=f"ledger_block:{symbol}")
 
             # === STEP 2.5: HARD CAP - 30% Gross Exposure Limit ===
             # This is a NON-NEGOTIABLE safety limit applied BEFORE risk manager
@@ -3985,7 +4412,7 @@ class SDMTradingEngine:
                 atr_ratio > 0.7
             )
 
-    def _reconcile_position_ledger(self) -> bool:
+    def _reconcile_position_ledger(self, halt_on_failure: bool = True, source: str = "periodic") -> bool:
         """
         Reconcile position ledger with exchange state.
 
@@ -3998,6 +4425,7 @@ class SDMTradingEngine:
 
             if not positions:
                 logger.info("No positions on exchange to reconcile")
+                self._clear_desync_active(source=f"{source}:no_positions")
                 return True
 
             active_straddles = set()
@@ -4023,17 +4451,28 @@ class SDMTradingEngine:
             if warnings:
                 for warning in warnings:
                     logger.warning(f"  ⚠️ {warning}")
+                first_warning = str(warnings[0]) if warnings else "unknown_warning"
+                self._mark_desync_active(reason=f"reconcile_warning:{first_warning[:64]}")
 
             if not is_consistent:
-                logger.critical("❌ LEDGER MISMATCH - ENTERING SAFE MODE")
-                logger.critical("   System will HALT new trades until manual reconciliation")
-                self.is_running = False  # Stop trading
+                self._mark_desync_active(reason="reconcile_inconsistent")
+                if halt_on_failure:
+                    logger.critical("❌ LEDGER MISMATCH - ENTERING SAFE MODE")
+                    logger.critical("   System will HALT new trades until manual reconciliation")
+                    self.is_running = False  # Stop trading
+                else:
+                    logger.error("❌ LEDGER MISMATCH during {} reconcile (non-halting)", source)
                 return False
 
+            if not warnings:
+                self._clear_desync_active(source=f"{source}:consistent")
             return True
 
         except Exception as e:
             logger.error(f"Error during ledger reconciliation: {e}", exc_info=True)
+            self._mark_desync_active(reason=f"reconcile_exception:{type(e).__name__}")
+            if halt_on_failure:
+                self.is_running = False
             return False
 
     def _close_all_positions(self):
