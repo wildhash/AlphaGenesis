@@ -7,6 +7,7 @@ and trails the winner with a software stop.
 
 import time
 import os
+import hashlib
 from typing import Dict, List, Tuple, Optional, Any
 
 import numpy as np
@@ -62,6 +63,13 @@ class BreakoutStraddleManager:
         self.stale_adopted_runner_max_age_seconds = max(1800, int(os.getenv("STALE_ADOPTED_RUNNER_MAX_AGE_SECONDS", "21600")))
         self.stale_runner_cleanup_interval_seconds = max(60, int(os.getenv("STALE_RUNNER_CLEANUP_INTERVAL_SECONDS", "300")))
         self.close_reconcile_pause_seconds = max(0.0, min(2.0, float(os.getenv("CLOSE_RECONCILE_PAUSE_SECONDS", "0.2"))))
+        self.finals_jitter_enabled = os.getenv("FINALS_JITTER_ENABLED", "false").lower() == "true"
+        self.finals_jitter_max_delay_s = max(0.0, float(os.getenv("FINALS_JITTER_MAX_DELAY_S", "6.0")))
+        self.finals_size_jitter_pct = max(0.0, min(0.50, float(os.getenv("FINALS_SIZE_JITTER_PCT", "0.04"))))
+        self.finals_trigger_epsilon_bps = max(0.0, float(os.getenv("FINALS_TRIGGER_EPSILON_BPS", "8")))
+        self.finals_jitter_stale_seconds = max(
+            10.0, float(os.getenv("FINALS_JITTER_STALE_SECONDS", "45"))
+        )
         self._exit_ai_log_wired_emitted = False
         self.position_size_multiplier = 1.0
         self.last_daily_pnl = 0.0
@@ -119,6 +127,14 @@ class BreakoutStraddleManager:
             "closed_trade_recorded": False,
             "runner_side": "LONG",
             "last_stale_cleanup_check_ts": 0.0,
+            "finals_jitter_seed_key": "",
+            "finals_jitter_armed_ts": 0.0,
+            "finals_jitter_release_ts": 0.0,
+            "finals_jitter_stale_after_ts": 0.0,
+            "finals_jitter_delay_s": 0.0,
+            "finals_jitter_size_factor": 1.0,
+            "finals_jitter_eps_bps": 0.0,
+            "finals_jitter_eps": 0.0,
         })
 
     def _reset_if_ready(self, state: Dict, now: float):
@@ -222,6 +238,85 @@ class BreakoutStraddleManager:
 
     def _mark_action(self, state: Dict, now: float):
         state["last_action_ts"] = now
+
+    def _finals_jitter_u01(self, key: str) -> float:
+        digest = hashlib.sha256(key.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:8], "big")
+        return (value % 10_000_000) / 10_000_000.0
+
+    def _clear_finals_jitter(self, state: Dict) -> None:
+        state["finals_jitter_seed_key"] = ""
+        state["finals_jitter_armed_ts"] = 0.0
+        state["finals_jitter_release_ts"] = 0.0
+        state["finals_jitter_stale_after_ts"] = 0.0
+        state["finals_jitter_delay_s"] = 0.0
+        state["finals_jitter_size_factor"] = 1.0
+        state["finals_jitter_eps_bps"] = 0.0
+        state["finals_jitter_eps"] = 0.0
+
+    def _arm_or_release_finals_jitter(
+        self,
+        symbol: str,
+        state: Dict,
+        entry_reason: str,
+        entry_side: str,
+        now: float,
+    ) -> Tuple[bool, float, float, float]:
+        if not self.finals_jitter_enabled:
+            return True, 1.0, 0.0, 0.0
+
+        hour_bucket = int(now // 3600)
+        seed_key = f"{symbol}|{entry_side}|{entry_reason}|{hour_bucket}"
+        existing_seed = str(state.get("finals_jitter_seed_key") or "")
+        release_ts = float(state.get("finals_jitter_release_ts") or 0.0)
+
+        if existing_seed != seed_key or release_ts <= 0.0:
+            u = self._finals_jitter_u01(seed_key)
+            delay_s = self.finals_jitter_max_delay_s * u
+            size_factor = (1.0 - (self.finals_size_jitter_pct / 2.0)) + (self.finals_size_jitter_pct * u)
+            size_floor = 1.0 - (self.finals_size_jitter_pct / 2.0)
+            size_ceiling = 1.0 + (self.finals_size_jitter_pct / 2.0)
+            size_factor = max(size_floor, min(size_ceiling, size_factor))
+            eps_bps = self.finals_trigger_epsilon_bps * u
+            eps = eps_bps / 10_000.0
+
+            state["finals_jitter_seed_key"] = seed_key
+            state["finals_jitter_armed_ts"] = now
+            state["finals_jitter_release_ts"] = now + delay_s
+            state["finals_jitter_stale_after_ts"] = now + delay_s + self.finals_jitter_stale_seconds
+            state["finals_jitter_delay_s"] = delay_s
+            state["finals_jitter_size_factor"] = size_factor
+            state["finals_jitter_eps_bps"] = eps_bps
+            state["finals_jitter_eps"] = eps
+            logger.info(
+                "FINALS_JITTER_ARM symbol={} side={} delay_s={:.3f} size_factor={:.5f} eps_bps={:.3f} reason={}",
+                symbol,
+                entry_side,
+                delay_s,
+                size_factor,
+                eps_bps,
+                entry_reason,
+            )
+            return False, size_factor, eps_bps, eps
+
+        if now < release_ts:
+            return False, float(state.get("finals_jitter_size_factor", 1.0) or 1.0), float(
+                state.get("finals_jitter_eps_bps", 0.0) or 0.0
+            ), float(state.get("finals_jitter_eps", 0.0) or 0.0)
+
+        armed_ts = float(state.get("finals_jitter_armed_ts") or now)
+        waited_s = max(0.0, now - armed_ts)
+        size_factor = float(state.get("finals_jitter_size_factor", 1.0) or 1.0)
+        eps_bps = float(state.get("finals_jitter_eps_bps", 0.0) or 0.0)
+        eps = float(state.get("finals_jitter_eps", 0.0) or 0.0)
+        logger.info(
+            "FINALS_JITTER_RELEASE symbol={} side={} waited_s={:.3f}",
+            symbol,
+            entry_side,
+            waited_s,
+        )
+        self._clear_finals_jitter(state)
+        return True, size_factor, eps_bps, eps
 
     def _maybe_cleanup_stale_adopted_runner(self, symbol: str, state: Dict, now: float) -> bool:
         current_state = state.get("state")
@@ -1415,7 +1510,15 @@ class BreakoutStraddleManager:
         notional = legacy_amount * size_pct
         return notional / price, atr_ratio, breakout, initial_stop, trail_activation, max_hold, trail_pct
 
-    def try_open(self, symbol: str, price: float, legacy_amount: float, reason: Optional[str] = None, entry_meta: Optional[Dict[str, Any]] = None) -> bool:
+    def try_open(
+        self,
+        symbol: str,
+        price: float,
+        legacy_amount: float,
+        reason: Optional[str] = None,
+        entry_meta: Optional[Dict[str, Any]] = None,
+        entry_side: Optional[str] = None,
+    ) -> bool:
         now = time.time()
         state = self._get_state(symbol)
         self._reset_if_ready(state, now)
@@ -1532,11 +1635,38 @@ class BreakoutStraddleManager:
                 return True
                 # --- End Guarded Adoption Patch ---
 
+        normalized_reason = self._normalize_entry_reason(reason or state.get("entry_reason") or "UNKNOWN")
+        normalized_side = str(entry_side or "BOTH").strip().upper()
+        if normalized_side not in {"LONG", "SHORT"}:
+            normalized_side = "BOTH"
+
+        jitter_ready, jitter_size_factor, jitter_eps_bps, jitter_eps = self._arm_or_release_finals_jitter(
+            symbol=symbol,
+            state=state,
+            entry_reason=normalized_reason,
+            entry_side=normalized_side,
+            now=now,
+        )
+        if not jitter_ready:
+            return False
+
+        if not isinstance(entry_meta, dict):
+            entry_meta = {}
+        entry_meta.setdefault("entry_reason", normalized_reason)
+        entry_meta.setdefault("entry_side", normalized_side)
+        if self.finals_jitter_enabled:
+            entry_meta["finals_jitter"] = {
+                "size_factor": jitter_size_factor,
+                "eps_bps": jitter_eps_bps,
+            }
+
         size, atr_ratio, breakout, initial_stop, trail_activation, max_hold, trail_pct = self._calculate_size(
             symbol,
             legacy_amount,
             price
         )
+        size *= max(0.01, float(jitter_size_factor or 1.0))
+        breakout = max(0.007, min(0.03, breakout + max(0.0, float(jitter_eps or 0.0))))
         if size <= 0:
             return False
         estimated_usage = size * price * 2.0
@@ -1578,7 +1708,7 @@ class BreakoutStraddleManager:
         state["entry_price"] = price
         state["entry_time"] = now
         state["symbol"] = symbol
-        state["entry_reason"] = self._normalize_entry_reason(reason or state.get("entry_reason") or "UNKNOWN")
+        state["entry_reason"] = normalized_reason
         if entry_meta:
             state["entry_meta"] = entry_meta
             state["entry_regime"] = entry_meta.get("regime")
@@ -1645,6 +1775,15 @@ class BreakoutStraddleManager:
             logger.warning("⚠ STRADDLE_STATE_CLEARED reason=flag")
         state = self._get_state(symbol)
         self._reset_if_ready(state, now)
+        if state.get("state") == self.STATE_IDLE:
+            stale_after_ts = float(state.get("finals_jitter_stale_after_ts") or 0.0)
+            if stale_after_ts > 0.0 and now >= stale_after_ts:
+                logger.info(
+                    "FINALS_JITTER_CANCEL symbol={} reason=stale_signal_wait timeout_s={}",
+                    symbol,
+                    int(self.finals_jitter_stale_seconds),
+                )
+                self._clear_finals_jitter(state)
         self._maybe_adopt_from_ledger(symbol, price)
         if not self._exit_ai_log_wired_emitted:
             logger.info(

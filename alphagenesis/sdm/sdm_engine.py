@@ -722,6 +722,12 @@ class SDMTradingEngine:
             0.0,
             float(os.getenv("CHAMPION_LADDER_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001"))),
         )
+        self.tuple_decay_enabled = os.getenv("TUPLE_DECAY_ENABLED", "true").lower() == "true"
+        try:
+            tuple_decay_lambda = float(os.getenv("TUPLE_DECAY_LAMBDA", "0.95"))
+        except (TypeError, ValueError):
+            tuple_decay_lambda = 0.95
+        self.tuple_decay_lambda = max(0.50, min(0.999, tuple_decay_lambda))
         self.champion_ladder_levels = (1.00, 1.10, 1.15)
         self.champion_ladder_state = self._load_champion_ladder_state()
 
@@ -968,6 +974,7 @@ class SDMTradingEngine:
     def _init_tuple_stats(self) -> Dict[str, Any]:
         return {
             "n": 0,
+            "raw_n": 0,
             "wins": 0,
             "gross_profit": 0.0,
             "gross_loss": 0.0,
@@ -976,21 +983,25 @@ class SDMTradingEngine:
             "pf": 0.0,
         }
 
-    def _update_tuple_stats(self, stats: Dict[str, Any], pnl: float) -> None:
-        stats["n"] += 1
-        stats["net_pnl"] += pnl
+    def _update_tuple_stats(self, stats: Dict[str, Any], pnl: float, weight: float = 1.0) -> None:
+        trade_weight = max(0.0, float(weight or 0.0))
+        if trade_weight <= 0.0:
+            return
+        stats["raw_n"] += 1
+        stats["n"] += trade_weight
+        stats["net_pnl"] += (pnl * trade_weight)
         if pnl > 0:
-            stats["wins"] += 1
-            stats["gross_profit"] += pnl
+            stats["wins"] += trade_weight
+            stats["gross_profit"] += (pnl * trade_weight)
         elif pnl < 0:
-            stats["gross_loss"] += abs(pnl)
+            stats["gross_loss"] += (abs(pnl) * trade_weight)
 
     def _finalize_tuple_stats(self, stats: Dict[str, Any]) -> Dict[str, Any]:
-        n = int(stats.get("n", 0) or 0)
-        wins = int(stats.get("wins", 0) or 0)
+        n = float(stats.get("n", 0.0) or 0.0)
+        wins = float(stats.get("wins", 0.0) or 0.0)
         gross_profit = float(stats.get("gross_profit", 0.0) or 0.0)
         gross_loss = float(stats.get("gross_loss", 0.0) or 0.0)
-        if n > 0:
+        if n > 0.0:
             win_rate = wins / n
         else:
             win_rate = 0.0
@@ -1048,12 +1059,16 @@ class SDMTradingEngine:
                 close_ms = 0
             if close_ms <= 0:
                 continue
+            weight = 1.0
+            if self.tuple_decay_enabled:
+                age_hours = max(0.0, (now_ms - close_ms) / 3600000.0)
+                weight = float(self.tuple_decay_lambda ** age_hours)
             if close_ms >= lookback_cutoff_ms:
-                self._update_tuple_stats(overall, pnl_float)
+                self._update_tuple_stats(overall, pnl_float, weight=weight)
             if close_ms >= degrade_cutoff_ms:
-                self._update_tuple_stats(degrade, pnl_float)
+                self._update_tuple_stats(degrade, pnl_float, weight=weight)
             if since_ms > 0 and close_ms >= int(since_ms):
-                self._update_tuple_stats(at_level, pnl_float)
+                self._update_tuple_stats(at_level, pnl_float, weight=weight)
 
         return (
             self._finalize_tuple_stats(overall),
@@ -1062,7 +1077,7 @@ class SDMTradingEngine:
         )
 
     def _champion_gate_met(self, stats: Dict[str, Any], min_trades: int) -> bool:
-        n = int(stats.get("n", 0) or 0)
+        n = int(stats.get("raw_n", 0) or 0)
         win_rate = float(stats.get("win_rate", 0.0) or 0.0)
         pf = float(stats.get("pf", 0.0) or 0.0)
         net_pnl = float(stats.get("net_pnl", 0.0) or 0.0)
@@ -1097,7 +1112,7 @@ class SDMTradingEngine:
             since_ms=int(state.get("since_ms", 0) or 0),
         )
 
-        new_n_at_level = int(at_level_stats.get("n", 0) or 0)
+        new_n_at_level = int(at_level_stats.get("raw_n", 0) or 0)
         if int(state.get("n_at_level", 0) or 0) != new_n_at_level:
             state["n_at_level"] = new_n_at_level
             changed = True
@@ -1115,7 +1130,7 @@ class SDMTradingEngine:
 
             degraded = (
                 prev_level > 1.00
-                and int(degrade_stats.get("n", 0) or 0) > 0
+                and int(degrade_stats.get("raw_n", 0) or 0) > 0
                 and (
                     float(degrade_stats.get("pf", 0.0) or 0.0) < self.champion_ladder_degrade_profit_factor
                     or float(degrade_stats.get("win_rate", 0.0) or 0.0) < self.champion_ladder_degrade_win_rate
@@ -1140,7 +1155,7 @@ class SDMTradingEngine:
                 )
             else:
                 soft_quarantine = (
-                    int(overall_stats.get("n", 0) or 0) >= self.champion_ladder_soft_quarantine_min_trades
+                    int(overall_stats.get("raw_n", 0) or 0) >= self.champion_ladder_soft_quarantine_min_trades
                     and float(overall_stats.get("net_pnl", 0.0) or 0.0) < 0.0
                 )
                 if soft_quarantine:
@@ -1153,7 +1168,7 @@ class SDMTradingEngine:
                     logger.warning(
                         "CHAMPION_SOFT_QUARANTINE tuple={} n={} net_pnl={:.4f} quarantine_s={}",
                         tuple_key,
-                        int(overall_stats.get("n", 0) or 0),
+                        int(overall_stats.get("raw_n", 0) or 0),
                         float(overall_stats.get("net_pnl", 0.0) or 0.0),
                         self.champion_ladder_quarantine_seconds,
                     )
@@ -1186,10 +1201,20 @@ class SDMTradingEngine:
             level = 1.00
         state["level"] = level
 
+        if self.tuple_decay_enabled:
+            logger.info(
+                "TUPLE_DECAY_UPDATE tuple={} lam={:.3f} trades={:.3f} win_rate={:.3f} total_pnl={:.4f}",
+                tuple_key,
+                self.tuple_decay_lambda,
+                float(overall_stats.get("n", 0.0) or 0.0),
+                float(overall_stats.get("win_rate", 0.0) or 0.0),
+                float(overall_stats.get("net_pnl", 0.0) or 0.0),
+            )
+
         logger.info(
             "CHAMPION_EVAL tuple={} n={} win_rate={:.3f} pf={:.3f} net_pnl={:.4f} level={:.2f} decision={}",
             tuple_key,
-            int(overall_stats.get("n", 0) or 0),
+            int(overall_stats.get("raw_n", 0) or 0),
             float(overall_stats.get("win_rate", 0.0) or 0.0),
             float(overall_stats.get("pf", 0.0) or 0.0),
             float(overall_stats.get("net_pnl", 0.0) or 0.0),
@@ -1242,7 +1267,7 @@ class SDMTradingEngine:
 
         for tuple_key, stats in stats_map.items():
             finalized = self._finalize_tuple_stats(stats)
-            if int(finalized.get("n", 0) or 0) < 3:
+            if int(finalized.get("raw_n", 0) or 0) < 3:
                 continue
             symbol, entry_reason, regime = self._split_tuple_key(tuple_key)
             self._evaluate_champion_tuple(symbol=symbol, entry_reason=entry_reason, regime=regime)
@@ -1582,7 +1607,8 @@ class SDMTradingEngine:
                                 symbol=symbol,
                                 price=price,
                                 legacy_amount=self.legacy_amount,
-                                reason=action.get("reason"),
+                                reason="DEBUG_DRY_RUN_TEST",
+                                entry_side="BOTH",
                             )
                             if opened:
                                 self.test_override_used = True
@@ -3322,6 +3348,7 @@ class SDMTradingEngine:
                         legacy_amount=legacy_for_straddle,
                         reason=action.get('reason'),
                         entry_meta=action.get('entry_meta'),
+                        entry_side=action.get('direction'),
                     )
                     if opened:
                         self._diag_block_counts["opened_straddles"] += 1
