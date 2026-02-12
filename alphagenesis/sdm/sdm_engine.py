@@ -418,6 +418,7 @@ class ReasonRegimeQuarantine:
     def __init__(
         self,
         state_path: str,
+        db_path: str,
         lookback_hours: int = 6,
         min_trades: int = 6,
         max_total_pnl: float = -10.0,
@@ -426,6 +427,7 @@ class ReasonRegimeQuarantine:
         allow_keys_csv: str = "",
     ):
         self.state_path = state_path
+        self.db_path = db_path
         self.lookback_hours = max(1, int(lookback_hours))
         self.min_trades = max(1, int(min_trades))
         self.max_total_pnl = float(max_total_pnl)
@@ -514,8 +516,8 @@ class ReasonRegimeQuarantine:
     def get_meta(self, entry_reason: Any, regime: Any) -> Dict[str, Any]:
         return self.active_keys.get(self._reason_key_lower(entry_reason, regime), {})
 
-    def _ingest_from_ledger(self, position_ledger: Any, cutoff_ts: float) -> Dict[str, Dict[str, Any]]:
-        stats: Dict[str, Dict[str, Any]] = defaultdict(
+    def _new_stats_map(self) -> Dict[str, Dict[str, Any]]:
+        return defaultdict(
             lambda: {
                 "entry_reason": "LEGACY_NONE",
                 "entry_regime": "unknown",
@@ -524,20 +526,24 @@ class ReasonRegimeQuarantine:
                 "total_pnl": 0.0,
             }
         )
+
+    def _ingest_from_ledger(self, position_ledger: Any, cutoff_ts: float) -> tuple[Dict[str, Dict[str, Any]], int]:
+        stats: Dict[str, Dict[str, Any]] = self._new_stats_map()
+        used_rows = 0
         min_abs_pnl = max(
             0.0,
             float(os.getenv("REASON_QUARANTINE_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001"))),
         )
 
         if position_ledger is None:
-            return stats
+            return stats, used_rows
 
         if hasattr(position_ledger, "get_recent_closed_trades"):
             trades = position_ledger.get_recent_closed_trades(hours=self.lookback_hours, limit=5000)
         elif hasattr(position_ledger, "get_closed_trades"):
             trades = position_ledger.get_closed_trades(limit=5000)
         else:
-            return stats
+            return stats, used_rows
 
         for trade in trades:
             close_time = self._obj_get(trade, "close_time")
@@ -588,8 +594,75 @@ class ReasonRegimeQuarantine:
             st["total_pnl"] += pnl_float
             if pnl_float > 0:
                 st["wins"] += 1
+            used_rows += 1
 
-        return stats
+        return stats, used_rows
+
+    def _ingest_from_ai_logs(self, since_ms: int, stats: Dict[str, Dict[str, Any]]) -> int:
+        used_rows = 0
+        min_abs_pnl = max(
+            0.0,
+            float(os.getenv("REASON_QUARANTINE_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001"))),
+        )
+        conn = sqlite3.connect(self.db_path)
+        query = """
+            SELECT payload_json
+            FROM ai_logs
+            WHERE status='done'
+              AND stage='Exit Execution'
+              AND created_at_ms >= ?
+        """
+        for (payload_json,) in conn.execute(query, (since_ms,)):
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                continue
+            inp = payload.get("input", {}) if isinstance(payload, dict) else {}
+            out = payload.get("output", {}) if isinstance(payload, dict) else {}
+
+            entry_reason = inp.get("entry_reason") or out.get("entry_reason")
+            if entry_reason is None and isinstance(inp.get("entry_meta"), dict):
+                entry_reason = inp.get("entry_meta", {}).get("entry_reason")
+            entry_regime = (
+                inp.get("regime")
+                or out.get("regime")
+                or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
+            )
+            key_lower = self._reason_key_lower(entry_reason, entry_regime)
+            if not self._is_tracked_key(key_lower):
+                continue
+
+            exit_reason = str(inp.get("exit_reason") or out.get("exit_reason") or "").strip().lower()
+            if exit_reason == "exchange_flat_detected":
+                continue
+            reason_norm = self._normalize_reason(entry_reason).lower()
+            regime_norm = self._normalize_regime(entry_regime).lower()
+            if exit_reason == "exchange_closed" and reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+                continue
+
+            pnl = out.get("realized_pnl")
+            if pnl is None:
+                pnl = inp.get("realized_pnl")
+            if pnl is None:
+                continue
+            try:
+                pnl_float = float(pnl)
+            except (TypeError, ValueError):
+                continue
+            if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+                continue
+
+            st = stats[key_lower]
+            st["entry_reason"] = self._normalize_reason(entry_reason)
+            st["entry_regime"] = self._normalize_regime(entry_regime)
+            st["n"] += 1
+            st["total_pnl"] += pnl_float
+            if pnl_float > 0:
+                st["wins"] += 1
+            used_rows += 1
+
+        conn.close()
+        return used_rows
 
     def refresh(self, force: bool = False, position_ledger: Optional[Any] = None) -> int:
         now = time.time()
@@ -598,6 +671,7 @@ class ReasonRegimeQuarantine:
         self.last_refresh_ts = now
         now_ms = int(now * 1000)
         cutoff_ts = now - (self.lookback_hours * 3600)
+        since_ms = int(cutoff_ts * 1000)
 
         state_changed = False
         # Drop expired quarantines first.
@@ -608,7 +682,19 @@ class ReasonRegimeQuarantine:
                 state_changed = True
 
         try:
-            stats = self._ingest_from_ledger(position_ledger, cutoff_ts)
+            stats, used_rows = self._ingest_from_ledger(position_ledger, cutoff_ts)
+            source = "ledger"
+            if used_rows < self.min_trades and os.path.exists(self.db_path):
+                stats = self._new_stats_map()
+                used_rows = self._ingest_from_ai_logs(since_ms, stats)
+                source = "ai_logs"
+            logger.info(
+                "REASON_QUARANTINE_INGEST source={} rows_used={} lookback_h={} tracked_keys={}",
+                source,
+                used_rows,
+                self.lookback_hours,
+                sorted(self.allow_reason_keys),
+            )
         except Exception as exc:
             logger.warning("REASON_QUARANTINE_REFRESH_FAILED err={}", exc)
             if state_changed:
@@ -1090,6 +1176,7 @@ class SDMTradingEngine:
         if self.reason_quarantine_enabled:
             self.reason_quarantine = ReasonRegimeQuarantine(
                 state_path=os.getenv("REASON_QUARANTINE_STATE_PATH", "/opt/AlphaGenesis/tmp/reason_quarantine.json"),
+                db_path=os.getenv("AI_LOG_DB_PATH", "/opt/AlphaGenesis/tmp/ai_logs.sqlite"),
                 lookback_hours=int(os.getenv("REASON_QUARANTINE_LOOKBACK_HOURS", "6")),
                 min_trades=int(os.getenv("REASON_QUARANTINE_MIN_TRADES", "6")),
                 max_total_pnl=float(os.getenv("REASON_QUARANTINE_MAX_TOTAL_PNL", "-10.0")),
