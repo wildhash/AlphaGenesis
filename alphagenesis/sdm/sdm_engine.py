@@ -679,6 +679,23 @@ class SDMTradingEngine:
         # Aggressive straddle controls (competition tuning)
         self.stop_new_if_pnl_under = -0.06
         self.emergency_stop_at = -0.08
+        try:
+            gross_cap_raw = float(os.getenv("MAX_GROSS_EXPOSURE_PCT", "0.30"))
+        except (TypeError, ValueError):
+            gross_cap_raw = 0.30
+        self.max_gross_exposure_pct = max(0.05, min(1.0, gross_cap_raw))
+        self.profit_lock_enabled = os.getenv("PROFIT_LOCK_ENABLED", "true").lower() == "true"
+        try:
+            profit_lock_trigger = float(os.getenv("PROFIT_LOCK_TRIGGER_PNL_PCT", "0.0025"))
+        except (TypeError, ValueError):
+            profit_lock_trigger = 0.0025
+        self.profit_lock_trigger_pnl_pct = max(0.0, profit_lock_trigger)
+        try:
+            profit_lock_cap_raw = float(os.getenv("PROFIT_LOCK_GROSS_EXPOSURE_PCT", "0.20"))
+        except (TypeError, ValueError):
+            profit_lock_cap_raw = 0.20
+        self.profit_lock_gross_exposure_pct = max(0.05, min(self.max_gross_exposure_pct, profit_lock_cap_raw))
+        self._profit_lock_last_active: Optional[bool] = None
 
         # Symbol prioritization (tiered via env for finals)
         tier_a = os.getenv("TIER_A_PAIRS", "cmt_solusdt,cmt_ethusdt,cmt_ltcusdt").split(",")
@@ -3096,7 +3113,7 @@ class SDMTradingEngine:
         positions_snapshot = self.position_ledger.get_all_positions()
         current_positions = len(positions_snapshot)
         _, margin_used_live, total_notional_live = self._calculate_position_metrics(positions_snapshot)
-        gross_cap_pct = 0.30
+        gross_cap_pct, profit_lock_active = self._effective_gross_exposure_cap()
         gross_exposure_pct = (
             (total_notional_live / self.current_capital)
             if self.current_capital and self.current_capital > 0
@@ -3115,6 +3132,7 @@ class SDMTradingEngine:
                 if gross_exposure_pct is not None
                 else None
             ),
+            "profit_lock_active": profit_lock_active,
             "max_margin_ratio": getattr(self.risk_manager, "max_margin_ratio", None),
             "margin_ratio_current": margin_ratio,
             "margin_ratio_remaining": (
@@ -3159,6 +3177,7 @@ class SDMTradingEngine:
             'vol_bucket': probe_vol_bucket,
             'atr_ratio': probe_atr_ratio,
             'risk_headroom': risk_headroom,
+            'profit_lock_active': profit_lock_active,
             'size_floor_applied': False,
         }
 
@@ -3203,6 +3222,7 @@ class SDMTradingEngine:
                 "funding_rate": funding_rate,
                 "current_positions": current_positions,
                 "risk_headroom": risk_headroom,
+                "profit_lock_active": profit_lock_active,
                 "probe_mode": probe_mode,
                 "probe_symbol_allowlist": sorted(self.probe_override_allowlist),
                 "size_scale": size_scale,
@@ -3437,13 +3457,14 @@ class SDMTradingEngine:
                 new_gross_notional = total_notional + trade_notional
                 gross_exposure_pct = new_gross_notional / self.current_capital if self.current_capital > 0 else 0.0
 
-                # HARD CAP: 30% gross exposure
-                MAX_GROSS_EXPOSURE_PCT = 0.30
+                # Gross exposure cap (optionally tightened in profit-lock mode)
+                max_gross_exposure_pct, profit_lock_active = self._effective_gross_exposure_cap()
 
-                if gross_exposure_pct > MAX_GROSS_EXPOSURE_PCT:
+                if gross_exposure_pct > max_gross_exposure_pct:
                     gross_exposure_blocked = True
+                    cap_mode = "profit_lock" if profit_lock_active else "base"
                     gross_exposure_reason = (
-                        f"GROSS EXPOSURE CAP EXCEEDED: {gross_exposure_pct:.1%} > {MAX_GROSS_EXPOSURE_PCT:.1%} "
+                        f"GROSS EXPOSURE CAP EXCEEDED [{cap_mode}]: {gross_exposure_pct:.1%} > {max_gross_exposure_pct:.1%} "
                         f"(current: ${total_notional:.2f}, new trade: ${trade_notional:.2f}, "
                         f"total: ${new_gross_notional:.2f}, balance: ${self.current_capital:.2f})"
                     )
@@ -4142,16 +4163,48 @@ class SDMTradingEngine:
             logger.warning(f"Gamma squeeze detection failed for {symbol}: {e}")
             return False
 
+    def _effective_gross_exposure_cap(self) -> tuple[float, bool]:
+        """
+        Return active gross exposure cap and whether profit-lock mode is engaged.
+        Profit lock tightens new-entry exposure once daily PnL reaches a threshold.
+        """
+        cap = self.max_gross_exposure_pct
+        profit_lock_active = False
+        if self.profit_lock_enabled and self.daily_pnl_percent >= self.profit_lock_trigger_pnl_pct:
+            cap = min(cap, self.profit_lock_gross_exposure_pct)
+            profit_lock_active = True
+
+        if self._profit_lock_last_active is None or self._profit_lock_last_active != profit_lock_active:
+            logger.info(
+                "PROFIT_LOCK_STATUS active={} daily_pnl_pct={:.4f} trigger_pct={:.4f} gross_cap_pct={:.3f}",
+                profit_lock_active,
+                float(self.daily_pnl_percent),
+                float(self.profit_lock_trigger_pnl_pct),
+                float(cap),
+            )
+            self._profit_lock_last_active = profit_lock_active
+
+        return cap, profit_lock_active
+
     def _log_sdm_status(self):
         """Log SDM system status."""
         pnl = self.current_capital - self.initial_capital
         pnl_pct = (pnl / self.initial_capital) * 100
+        gross_cap_pct, profit_lock_active = self._effective_gross_exposure_cap()
+        cap_mode = "profit_lock" if profit_lock_active else "base"
 
         logger.info(f"\n{'='*70}")
         logger.info("SDM SYSTEM STATUS")
         logger.info(f"{'='*70}")
         logger.info(f"Capital: ${self.current_capital:,.2f} (P&L: ${pnl:+,.2f} / {pnl_pct:+.2f}%)")
         logger.info(f"Daily Trades: {self.daily_trades}")
+        logger.info(
+            "Risk Cap: gross_exposure={:.1f}% mode={} daily_pnl={:+.2f}% trigger={:.2f}%",
+            gross_cap_pct * 100.0,
+            cap_mode,
+            self.daily_pnl_percent * 100.0,
+            self.profit_lock_trigger_pnl_pct * 100.0,
+        )
 
         # Intent graph status
         ig_status = self.intent_graph.get_state_summary()
