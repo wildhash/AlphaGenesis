@@ -105,6 +105,8 @@ class PositionLedger:
         self.trades_today: Dict[str, int] = {}  # symbol -> count
         self.closed_trades: List[ClosedTrade] = []  # Learning dataset
         self.desync_events: Dict[str, DesyncEvent] = {}  # symbol -> desync
+        self.post_open_confirm_until: Dict[str, float] = {}  # symbol -> unix ts
+        self.sol_flat_detect_state: Dict[str, Dict[str, float]] = {}
 
         # Config
         self.cooldown_seconds = 180  # 3 minutes after close
@@ -112,6 +114,40 @@ class PositionLedger:
         self.desync_grace_seconds = 30  # Wait 30s before SAFE MODE
         self.save_interval_seconds = 5  # Throttle saves
         self.max_closed_trades = 1000  # Keep last N for learning
+        try:
+            self.post_open_confirmation_seconds = max(
+                0.0,
+                float(os.getenv("POST_OPEN_CONFIRMATION_SECONDS", "10") or 10.0),
+            )
+        except (TypeError, ValueError):
+            self.post_open_confirmation_seconds = 10.0
+        self.sol_flat_detect_debounce_enabled = str(
+            os.getenv("SOL_FLAT_DETECT_DEBOUNCE_ENABLED", "false")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self.sol_flat_detect_debounce_count = max(
+                1,
+                int(os.getenv("SOL_FLAT_DETECT_DEBOUNCE_COUNT", "3") or 3),
+            )
+        except (TypeError, ValueError):
+            self.sol_flat_detect_debounce_count = 3
+        try:
+            self.sol_flat_detect_debounce_window_s = max(
+                1.0,
+                float(os.getenv("SOL_FLAT_DETECT_DEBOUNCE_WINDOW_S", "10") or 10.0),
+            )
+        except (TypeError, ValueError):
+            self.sol_flat_detect_debounce_window_s = 10.0
+        self.sol_size_mismatch_autosync_enabled = str(
+            os.getenv("SOL_SIZE_MISMATCH_AUTOSYNC_ENABLED", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self.sol_size_mismatch_tolerance = max(
+                0.0,
+                float(os.getenv("SOL_SIZE_MISMATCH_TOLERANCE", "0.001") or 0.001),
+            )
+        except (TypeError, ValueError):
+            self.sol_size_mismatch_tolerance = 0.001
 
         # State
         self.last_save_ts = 0.0
@@ -120,6 +156,41 @@ class PositionLedger:
         self._load()
         self._auto_reset_daily_counters()
         logger.info(f"PositionLedger initialized with {len([p for p in self.positions.values() if p.side != 'FLAT'])} open positions")
+
+    @staticmethod
+    def _is_sol_symbol(symbol: str) -> bool:
+        return str(symbol).strip().lower() == "cmt_solusdt"
+
+    def _reset_sol_flat_detect_state(self, symbol: str, reason: str) -> None:
+        state = self.sol_flat_detect_state.pop(symbol, None)
+        if not self._is_sol_symbol(symbol):
+            return
+        if not state:
+            return
+        logger.info(
+            "SOL_FLAT_DETECT_DEBOUNCE count={} window_s={} action=RELEASE reason={} symbol={}",
+            int(state.get("count", 0) or 0),
+            int(max(0.0, time.time() - float(state.get("first_seen_ts", time.time()) or time.time()))),
+            reason,
+            symbol,
+        )
+
+    def _update_sol_flat_detect_state(self, symbol: str, now_ts: float) -> tuple[int, float, bool]:
+        state = self.sol_flat_detect_state.get(symbol) or {}
+        first_seen_ts = float(state.get("first_seen_ts", 0.0) or 0.0)
+        count = int(state.get("count", 0) or 0)
+        if first_seen_ts <= 0.0 or (now_ts - first_seen_ts) > self.sol_flat_detect_debounce_window_s:
+            first_seen_ts = now_ts
+            count = 1
+        else:
+            count += 1
+        self.sol_flat_detect_state[symbol] = {
+            "first_seen_ts": first_seen_ts,
+            "last_seen_ts": now_ts,
+            "count": count,
+        }
+        age_s = max(0.0, now_ts - first_seen_ts)
+        return count, age_s, count >= self.sol_flat_detect_debounce_count
 
     def _load(self):
         """Load ledger from disk."""
@@ -300,6 +371,16 @@ class PositionLedger:
         # Clear cooldown and desync if any
         self.cooldown_until.pop(symbol, None)
         self.desync_events.pop(symbol, None)
+        self.post_open_confirm_until.pop(symbol, None)
+        if self.post_open_confirmation_seconds > 0:
+            confirm_until = time.time() + self.post_open_confirmation_seconds
+            self.post_open_confirm_until[symbol] = confirm_until
+            logger.info(
+                "POST_OPEN_CONFIRMATION_ARMED symbol={} until={} window_s={}",
+                symbol,
+                int(confirm_until),
+                int(self.post_open_confirmation_seconds),
+            )
 
         self._save()
         logger.info(
@@ -392,6 +473,7 @@ class PositionLedger:
             cooldown = min(900, self.cooldown_seconds * 3)
 
         self.cooldown_until[symbol] = time.time() + cooldown
+        self.post_open_confirm_until.pop(symbol, None)
 
         self._save(force=True)
 
@@ -547,6 +629,7 @@ class PositionLedger:
         # DIRECTION 1: Exchange → Ledger
         for symbol, exch_data in exchange_map.items():
             ledger_pos = self.get_position(symbol)
+            self._reset_sol_flat_detect_state(symbol, reason="exchange_position_seen")
 
             # Check side mismatch
             if ledger_pos.side != exch_data['side']:
@@ -555,8 +638,27 @@ class PositionLedger:
                 self._record_desync(symbol, 'SIDE_MISMATCH', mismatch, now)
 
             # Check size mismatch
-            elif abs(ledger_pos.size - exch_data['size']) > 0.001:
+            elif abs(ledger_pos.size - exch_data['size']) > self.sol_size_mismatch_tolerance:
                 mismatch = f"{symbol}: ledger size={ledger_pos.size}, exchange size={exch_data['size']}"
+                symbol_norm = str(symbol).strip().lower()
+                if (
+                    symbol_norm == "cmt_solusdt"
+                    and self.sol_size_mismatch_autosync_enabled
+                    and ledger_pos.side == exch_data['side']
+                ):
+                    old_size = float(ledger_pos.size or 0.0)
+                    new_size = float(exch_data['size'] or 0.0)
+                    ledger_pos.size = new_size
+                    ledger_pos.last_exchange_sync_ts = now
+                    self.desync_events.pop(symbol, None)
+                    logger.warning(
+                        "SOL_SIZE_MISMATCH_AUTOSYNC symbol={} ledger_size_old={} exchange_size={} tolerance={}",
+                        symbol,
+                        old_size,
+                        new_size,
+                        self.sol_size_mismatch_tolerance,
+                    )
+                    continue
                 mismatches.append(mismatch)
                 self._record_desync(symbol, 'SIZE_MISMATCH', mismatch, now)
 
@@ -576,11 +678,54 @@ class PositionLedger:
             if symbol not in exchange_map:
                 # Ledger thinks open but exchange shows FLAT
                 mismatch = f"{symbol}: ledger={ledger_pos.side} but exchange=FLAT"
+                confirm_until = float(self.post_open_confirm_until.get(symbol, 0.0) or 0.0)
+                if confirm_until > now:
+                    remaining = max(0.0, confirm_until - now)
+                    self._reset_sol_flat_detect_state(symbol, reason="confirmation_window")
+                    if str(symbol).strip().lower() == "cmt_solusdt":
+                        logger.info(
+                            "SOL_CONFIRM_WINDOW_SUPPRESS_FLATTEN symbol={} remaining_s={} ledger={} exchange=FLAT",
+                            symbol,
+                            int(remaining),
+                            ledger_pos.side,
+                        )
+                    warnings.append(f"{symbol} confirmation window: {remaining:.0f}s remaining")
+                    continue
+                if confirm_until > 0.0:
+                    self.post_open_confirm_until.pop(symbol, None)
+                symbol_norm = str(symbol).strip().lower()
+                debounce_triggered = True
+                if symbol_norm == "cmt_solusdt" and self.sol_flat_detect_debounce_enabled:
+                    debounce_count, debounce_age_s, debounce_triggered = self._update_sol_flat_detect_state(symbol, now)
+                    logger.info(
+                        "SOL_FLAT_DETECT_DEBOUNCE count={} window_s={} action={} symbol={} ledger={} exchange=FLAT",
+                        debounce_count,
+                        int(debounce_age_s),
+                        "ARMED" if debounce_triggered else "SKIP",
+                        symbol,
+                        ledger_pos.side,
+                    )
+                if str(symbol).strip().lower() == "cmt_solusdt":
+                    try:
+                        position_age_s = max(0.0, now - float(ledger_pos.open_time or 0.0))
+                    except (TypeError, ValueError):
+                        position_age_s = 0.0
+                    logger.info(
+                        "SOL_LIFECYCLE_EVENT event=desync_detected symbol={} ledger_side={} exchange_side=FLAT position_age_s={} confirm_window_remaining_s=0",
+                        symbol,
+                        ledger_pos.side,
+                        int(position_age_s),
+                    )
 
                 # Check if desync is persistent
                 if symbol in self.desync_events:
                     desync = self.desync_events[symbol]
                     if (now - desync.first_seen_ts) > self.desync_grace_seconds:
+                        if symbol_norm == "cmt_solusdt" and self.sol_flat_detect_debounce_enabled and not debounce_triggered:
+                            warnings.append(
+                                f"{symbol} flat-detect debounce: waiting {self.sol_flat_detect_state.get(symbol, {}).get('count', 0):.0f}/{self.sol_flat_detect_debounce_count}"
+                            )
+                            continue
                         # Auto-close after grace period
                         logger.warning(f"⚠️ Auto-closing {symbol} - exchange confirmed FLAT after {self.desync_grace_seconds}s")
                         self.close_position(
@@ -589,6 +734,19 @@ class PositionLedger:
                             realized_pnl=0.0,
                             close_reason='exchange_flat_detected'
                         )
+                        if str(symbol).strip().lower() == "cmt_solusdt":
+                            logger.warning(
+                                "SOL_FLAT_DETECT_DEBOUNCE count={} window_s={} action=TRIGGER symbol={} ledger={} exchange=FLAT",
+                                int(self.sol_flat_detect_state.get(symbol, {}).get("count", 0) or 0),
+                                int(max(0.0, now - float(self.sol_flat_detect_state.get(symbol, {}).get("first_seen_ts", now) or now))),
+                                symbol,
+                                ledger_pos.side,
+                            )
+                            logger.warning(
+                                "SOL_LIFECYCLE_EVENT event=exchange_flat_autoclose symbol={} ledger_side={} exchange_side=FLAT",
+                                symbol,
+                                ledger_pos.side,
+                            )
                         warnings.append(f"Auto-closed {symbol} (exchange flat)")
                     else:
                         # Still in grace period
