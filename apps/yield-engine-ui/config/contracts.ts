@@ -1,6 +1,6 @@
 export interface ContractAddress {
   address: string;
-  abi?: any[];
+  abi?: unknown[];
 }
 
 export interface TokenConfig {
