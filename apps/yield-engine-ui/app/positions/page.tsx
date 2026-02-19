@@ -40,6 +40,7 @@ export default function PositionsPage() {
   };
 
   const handleExport = () => {
+    const timestamp = new Date().toISOString().split('T')[0];
     const csv = [
       ['ID', 'Type', 'Protocol', 'Tokens', 'Deposited', 'Current Value', 'APY', 'PnL', 'PnL %', 'Health', 'Status'].join(','),
       ...filteredPositions.map(pos => [
@@ -61,7 +62,7 @@ export default function PositionsPage() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `positions-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `positions-${timestamp}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };

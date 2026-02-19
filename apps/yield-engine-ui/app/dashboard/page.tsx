@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { mockPortfolio } from '@/mock/portfolio';
 import { TxModal } from '@/components/TxModal';
 import { formatCurrency, formatDate, formatTxHash } from '@/lib/utils/format';
@@ -137,10 +138,10 @@ export default function DashboardPage() {
                 <Activity className="h-5 w-5 text-emerald-400" />
                 Active Positions
               </h2>
-              <a href="/positions" className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1">
+              <Link href="/positions" className="text-sm text-emerald-400 hover:text-emerald-300 transition-colors flex items-center gap-1">
                 View All
                 <ExternalLink className="h-4 w-4" />
-              </a>
+              </Link>
             </div>
             <div className="space-y-3">
               {mockPortfolio.positions.map((position) => {
