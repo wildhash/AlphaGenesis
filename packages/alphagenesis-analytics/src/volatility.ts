@@ -11,6 +11,8 @@
  * Note: This is simplified for UI use. Full GARCH models remain in Python.
  */
 
+import { calculateReturns } from './utils';
+
 export interface VolatilityMetrics {
   current: number;
   annualized: number;
@@ -227,13 +229,8 @@ export function calculateRealizedVolatility(
     return 0;
   }
 
-  // Calculate returns
-  const returns: number[] = [];
-  for (let i = 1; i < prices.length; i++) {
-    if (prices[i - 1] !== 0) {
-      returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
-    }
-  }
+  // Calculate returns using shared utility
+  const returns = calculateReturns(prices);
 
   // Use last windowSize returns
   const recentReturns = returns.slice(-windowSize);

@@ -9,6 +9,8 @@
  * Hidden Markov Models and advanced statistical methods.
  */
 
+import { calculateReturns } from './utils';
+
 export type MarketRegime = 'calm' | 'trending' | 'volatile';
 
 export interface RegimeDetectionResult {
@@ -194,13 +196,8 @@ function analyzeVolatility(
   prices: number[],
   lookback: number
 ): { current: number; percentile: number } {
-  // Calculate returns
-  const returns: number[] = [];
-  for (let i = 1; i < prices.length; i++) {
-    if (prices[i - 1] !== 0) {
-      returns.push((prices[i] - prices[i - 1]) / prices[i - 1]);
-    }
-  }
+  // Calculate returns using shared utility
+  const returns = calculateReturns(prices);
 
   // Current volatility (last lookback periods)
   const recentReturns = returns.slice(-lookback);

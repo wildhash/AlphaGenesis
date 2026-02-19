@@ -53,3 +53,10 @@ export {
   type RiskLevel,
   RISK_LEVEL_THRESHOLDS,
 } from './types';
+
+// Utilities
+export {
+  calculateReturns,
+  mean,
+  standardDeviation,
+} from './utils';
