@@ -1,0 +1,55 @@
+name: Yield Engine UI CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/yield-engine-ui/**'
+      - 'packages/alphagenesis-analytics/**'
+      - '.github/workflows/ui-ci.yml'
+  push:
+    branches:
+      - feat/asterdex-self-driving-yield-ui
+      - main
+
+jobs:
+  build-and-lint:
+    name: Build and Lint UI
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: apps/yield-engine-ui/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: apps/yield-engine-ui
+        run: npm ci
+      
+      - name: Run TypeScript check
+        working-directory: apps/yield-engine-ui
+        run: npx tsc --noEmit
+      
+      - name: Run ESLint
+        working-directory: apps/yield-engine-ui
+        run: npm run lint
+      
+      - name: Build application
+        working-directory: apps/yield-engine-ui
+        run: npm run build
+        env:
+          NEXT_PUBLIC_ENABLE_MOCK_MODE: true
+      
+      - name: Check build artifacts
+        working-directory: apps/yield-engine-ui
+        run: |
+          if [ ! -d ".next" ]; then
+            echo "Build failed: .next directory not found"
+            exit 1
+          fi
+          echo "✅ Build successful"
