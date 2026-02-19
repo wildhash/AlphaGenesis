@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { mockPositions, Position } from '@/mock/positions';
 import { PositionsTable } from '@/components/PositionsTable';
+import { formatCurrency, formatDateTime } from '@/lib/utils/format';
 import { 
   Filter,
   Download,
@@ -25,6 +26,18 @@ export default function PositionsPage() {
   const totalValue = filteredPositions.reduce((sum, pos) => sum + pos.currentValue, 0);
   const totalPnL = filteredPositions.reduce((sum, pos) => sum + pos.pnl, 0);
   const avgHealth = filteredPositions.reduce((sum, pos) => sum + pos.health, 0) / filteredPositions.length;
+
+  const getHealthColor = (health: number) => {
+    if (health >= 90) return 'text-emerald-400';
+    if (health >= 70) return 'text-yellow-400';
+    return 'text-red-400';
+  };
+
+  const getHealthBg = (health: number) => {
+    if (health >= 90) return 'bg-emerald-900/20 border-emerald-700/30';
+    if (health >= 70) return 'bg-yellow-900/20 border-yellow-700/30';
+    return 'bg-red-900/20 border-red-700/30';
+  };
 
   const handleExport = () => {
     const csv = [
@@ -53,28 +66,6 @@ export default function PositionsPage() {
     window.URL.revokeObjectURL(url);
   };
 
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const getHealthColor = (health: number) => {
-    if (health >= 90) return 'text-emerald-400';
-    if (health >= 70) return 'text-yellow-400';
-    return 'text-red-400';
-  };
-
-  const getHealthBg = (health: number) => {
-    if (health >= 90) return 'bg-emerald-900/20 border-emerald-700/30';
-    if (health >= 70) return 'bg-yellow-900/20 border-yellow-700/30';
-    return 'bg-red-900/20 border-red-700/30';
-  };
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       <div className="max-w-7xl mx-auto px-6 py-8">
@@ -93,13 +84,13 @@ export default function PositionsPage() {
           <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6">
             <p className="text-slate-400 text-sm font-medium mb-2">Total Value</p>
             <p className="text-3xl font-bold text-white">
-              ${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              ${formatCurrency(totalValue)}
             </p>
           </div>
           <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6">
             <p className="text-slate-400 text-sm font-medium mb-2">Total P&L</p>
             <p className={`text-3xl font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-              {totalPnL >= 0 ? '+' : ''}${totalPnL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {totalPnL >= 0 ? '+' : ''}${formatCurrency(totalPnL)}
             </p>
           </div>
           <div className="bg-gradient-to-br from-slate-800/50 to-slate-900/50 backdrop-blur-sm border border-slate-700 rounded-xl p-6">
@@ -214,7 +205,7 @@ export default function PositionsPage() {
                     <span className="text-xs text-slate-400 font-medium">Current Value</span>
                   </div>
                   <p className="text-2xl font-bold text-white">
-                    ${selectedPosition.currentValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    ${formatCurrency(selectedPosition.currentValue)}
                   </p>
                 </div>
                 <div className="p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
@@ -232,7 +223,7 @@ export default function PositionsPage() {
                     <span className="text-xs text-slate-400 font-medium">P&L</span>
                   </div>
                   <p className={`text-2xl font-bold ${selectedPosition.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {selectedPosition.pnl >= 0 ? '+' : ''}${selectedPosition.pnl.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    {selectedPosition.pnl >= 0 ? '+' : ''}${formatCurrency(selectedPosition.pnl)}
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
                     {selectedPosition.pnlPercentage >= 0 ? '+' : ''}{selectedPosition.pnlPercentage.toFixed(2)}%
@@ -265,19 +256,19 @@ export default function PositionsPage() {
                   <div className="flex justify-between py-2 border-b border-slate-800">
                     <span className="text-slate-400">Deposited Amount</span>
                     <span className="text-white font-medium">
-                      ${selectedPosition.depositedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${formatCurrency(selectedPosition.depositedAmount)}
                     </span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-slate-800">
                     <span className="text-slate-400">Entry Date</span>
                     <span className="text-white flex items-center gap-1">
                       <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                      {formatDate(selectedPosition.entryDate)}
+                      {formatDateTime(selectedPosition.entryDate)}
                     </span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-slate-800">
                     <span className="text-slate-400">Last Update</span>
-                    <span className="text-white">{formatDate(selectedPosition.lastUpdate)}</span>
+                    <span className="text-white">{formatDateTime(selectedPosition.lastUpdate)}</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-slate-800">
                     <span className="text-slate-400">Status</span>

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { mockPortfolio } from '@/mock/portfolio';
 import { TxModal } from '@/components/TxModal';
+import { formatCurrency, formatDate, formatTxHash } from '@/lib/utils/format';
 import { 
   TrendingUp, 
   Wallet, 
@@ -22,18 +23,6 @@ export default function DashboardPage() {
   const handleOpenTxModal = (type: 'deposit' | 'withdraw') => {
     setTxModalType(type);
     setTxModalOpen(true);
-  };
-
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
-
-  const formatTxHash = (hash: string) => {
-    return `${hash.slice(0, 6)}...${hash.slice(-4)}`;
   };
 
   const isPositivePnL = mockPortfolio.pnlPercentage >= 0;
@@ -59,7 +48,7 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-1">
               <p className="text-3xl font-bold text-white">
-                ${mockPortfolio.totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${formatCurrency(mockPortfolio.totalValue)}
               </p>
               <p className="text-xs text-slate-500">
                 {mockPortfolio.totalShares.toLocaleString()} shares
@@ -77,7 +66,7 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-1">
               <p className="text-3xl font-bold text-white">
-                ${mockPortfolio.totalDeposits.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${formatCurrency(mockPortfolio.totalDeposits)}
               </p>
               <p className="text-xs text-slate-500">
                 Across {mockPortfolio.positions.length} positions
@@ -95,7 +84,7 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-1">
               <p className="text-3xl font-bold text-emerald-400">
-                ${mockPortfolio.totalYieldEarned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                ${formatCurrency(mockPortfolio.totalYieldEarned)}
               </p>
               <p className="text-xs text-emerald-500/70">
                 All-time earnings
@@ -113,7 +102,7 @@ export default function DashboardPage() {
             </div>
             <div className="space-y-1">
               <p className={`text-3xl font-bold ${isPositivePnL ? 'text-emerald-400' : 'text-red-400'}`}>
-                {isPositivePnL ? '+' : ''}${mockPortfolio.totalPnL.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                {isPositivePnL ? '+' : ''}${formatCurrency(mockPortfolio.totalPnL)}
               </p>
               <p className={`text-xs ${isPositivePnL ? 'text-emerald-500/70' : 'text-red-500/70'}`}>
                 {isPositivePnL ? '+' : ''}{mockPortfolio.pnlPercentage.toFixed(2)}%
@@ -183,7 +172,7 @@ export default function DashboardPage() {
                       <div>
                         <p className="text-slate-400 mb-1">Value</p>
                         <p className="text-white font-medium">
-                          ${position.currentValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          ${formatCurrency(position.currentValue)}
                         </p>
                       </div>
                       <div>
@@ -193,13 +182,13 @@ export default function DashboardPage() {
                       <div>
                         <p className="text-slate-400 mb-1">Yield Earned</p>
                         <p className="text-emerald-400 font-medium">
-                          +${position.yieldEarned.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          +${formatCurrency(position.yieldEarned)}
                         </p>
                       </div>
                       <div>
                         <p className="text-slate-400 mb-1">P&L</p>
                         <p className={`font-medium ${isPositive ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {isPositive ? '+' : ''}${positionPnL.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          {isPositive ? '+' : ''}${formatCurrency(positionPnL)}
                           <span className="text-xs ml-1">
                             ({isPositive ? '+' : ''}{positionPnLPercent.toFixed(2)}%)
                           </span>
@@ -226,7 +215,7 @@ export default function DashboardPage() {
                 >
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-white font-medium">
-                      ${deposit.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      ${formatCurrency(deposit.amount)}
                     </span>
                     <span className="text-xs text-slate-400">
                       {formatDate(deposit.timestamp)}

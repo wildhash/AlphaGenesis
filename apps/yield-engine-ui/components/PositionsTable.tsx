@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Position } from '@/mock/positions';
+import { formatCurrency } from '@/lib/utils/format';
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
 
 interface PositionsTableProps {
@@ -139,12 +140,12 @@ export function PositionsTable({ positions, onPositionClick }: PositionsTablePro
               </td>
               <td className="py-4 px-4 text-right">
                 <span className="text-white font-medium">
-                  ${position.depositedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ${formatCurrency(position.depositedAmount)}
                 </span>
               </td>
               <td className="py-4 px-4 text-right">
                 <span className="text-white font-medium">
-                  ${position.currentValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ${formatCurrency(position.currentValue)}
                 </span>
               </td>
               <td className="py-4 px-4 text-right">
@@ -160,7 +161,7 @@ export function PositionsTable({ positions, onPositionClick }: PositionsTablePro
                     <TrendingDown className="h-4 w-4 text-red-400" />
                   )}
                   <span className={position.pnl >= 0 ? 'text-emerald-400 font-medium' : 'text-red-400 font-medium'}>
-                    ${Math.abs(position.pnl).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ${formatCurrency(Math.abs(position.pnl))}
                   </span>
                   <span className={`text-xs ml-1 ${position.pnl >= 0 ? 'text-emerald-400/70' : 'text-red-400/70'}`}>
                     ({position.pnlPercentage >= 0 ? '+' : ''}{position.pnlPercentage.toFixed(2)}%)
