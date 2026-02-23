@@ -1,0 +1,24 @@
+{
+  "total_feedback": 1,
+  "adaptations": [],
+  "strategy_performance": {
+    "exploit_opportunities_lstm": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5014710273030838
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_ethusdt",
+      "intent_id": "exploit_opportunities",
+      "model_type": "lstm",
+      "timestamp": "2026-02-14T06:47:55.221932",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.5147102730308382
+    }
+  ]
+}

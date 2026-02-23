@@ -1,0 +1,105 @@
+{
+  "total_feedback": 10,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_arbitrage": {
+      "total_actions": 10,
+      "successful_actions": 10,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.617237880782
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_2_cmt_solusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:11.444914",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:15.782405",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_xrpusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:20.111481",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_adausdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:24.493071",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:28.887460",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T13:55:33.226413",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_3_cmt_btcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T14:01:29.561350",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_4_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T14:07:12.350065",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_5_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T14:12:39.726036",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_19_cmt_ethusdt",
+      "intent_id": "grow_capital",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-08T15:27:06.439512",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    }
+  ]
+}

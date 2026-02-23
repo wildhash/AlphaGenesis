@@ -1,0 +1,24 @@
+{
+  "total_feedback": 1,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_ensemble": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.5205
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_solusdt",
+      "intent_id": "grow_capital",
+      "model_type": "ensemble",
+      "timestamp": "2026-02-18T14:33:49.781986",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.7049999999999998
+    }
+  ]
+}

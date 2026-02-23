@@ -1,0 +1,24 @@
+{
+  "total_feedback": 1,
+  "adaptations": [],
+  "strategy_performance": {
+    "maintain_liquidity_arbitrage": {
+      "total_actions": 1,
+      "successful_actions": 1,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.518
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_1_cmt_bnbusdt",
+      "intent_id": "maintain_liquidity",
+      "model_type": "arbitrage",
+      "timestamp": "2026-02-11T08:08:27.342966",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    }
+  ]
+}

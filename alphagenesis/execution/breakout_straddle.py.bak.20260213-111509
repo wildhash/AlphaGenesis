@@ -1,0 +1,2258 @@
+"""
+Breakout Straddle Manager for WEEX hedge mode.
+
+Opens simultaneous LONG + SHORT, then closes the losing leg on breakout
+and trails the winner with a software stop.
+"""
+
+import time
+import os
+import hashlib
+from typing import Dict, List, Tuple, Optional, Any
+
+import numpy as np
+
+from loguru import logger
+
+
+class BreakoutStraddleManager:
+    STATE_IDLE = "IDLE"
+    STATE_HEDGED = "HEDGED"
+    STATE_RUNNER_LONG = "RUNNER_LONG"
+    STATE_RUNNER_SHORT = "RUNNER_SHORT"
+    STATE_DONE = "DONE"
+    STATE_COOLDOWN = "COOLDOWN"
+
+    def __init__(
+        self,
+        weex_client,
+        position_ledger=None,
+        straddle_risk: float = 0.18,
+        breakout_pct: float = 0.016,
+        trail_activation_pct: float = 0.01,
+        trail_pct: float = 0.006,
+        initial_stop_loss_pct: float = 0.01,
+        max_hold_seconds: int = 7200,
+        max_margin_usage_pct: float = 0.8,
+        cooldown_seconds: int = 45,
+        min_action_interval: float = 3.0,
+        min_update_interval: float = 1.0,
+        max_position_pct: float = 0.25,
+        normal_atr_pct: float = 0.003,
+        dry_run: bool = False,
+        ai_log_bus: Optional[Any] = None,
+    ):
+        self.weex = weex_client
+        self.position_ledger = position_ledger
+        self.straddle_risk = straddle_risk
+        self.breakout_pct = breakout_pct
+        self.trail_activation_pct = trail_activation_pct
+        self.trail_pct = trail_pct
+        self.initial_stop_loss_pct = initial_stop_loss_pct
+        self.max_hold_seconds = max_hold_seconds
+        self.max_margin_usage_pct = max_margin_usage_pct
+        self.cooldown_seconds = cooldown_seconds
+        self.min_action_interval = min_action_interval
+        self.min_update_interval = min_update_interval
+        self.max_position_pct = max_position_pct
+        self.normal_atr_pct = normal_atr_pct
+        self.dry_run = dry_run
+        self.ai_log_bus = ai_log_bus
+        self.probe_time_stop_seconds = max(300, int(os.getenv("PROBE_TIME_STOP_SECONDS", "900")))
+        self.estimated_taker_fee_rate = max(0.0, float(os.getenv("ESTIMATED_TAKER_FEE_RATE", "0.0006")))
+        self.stale_adopted_runner_max_age_seconds = max(1800, int(os.getenv("STALE_ADOPTED_RUNNER_MAX_AGE_SECONDS", "21600")))
+        self.stale_runner_cleanup_interval_seconds = max(60, int(os.getenv("STALE_RUNNER_CLEANUP_INTERVAL_SECONDS", "300")))
+        self.close_reconcile_pause_seconds = max(0.0, min(2.0, float(os.getenv("CLOSE_RECONCILE_PAUSE_SECONDS", "0.2"))))
+        self.force_hedged_exit_symbols = {
+            s.strip().lower()
+            for s in os.getenv("FORCE_HEDGED_EXIT_SYMBOLS", "").split(",")
+            if s.strip()
+        }
+        self.force_hedged_exit_seconds = max(0, int(os.getenv("FORCE_HEDGED_EXIT_SECONDS", "0")))
+        self.force_hedged_exit_reason = str(
+            os.getenv("FORCE_HEDGED_EXIT_REASON", "FORCE_HEDGED_EXIT_UNBLOCK")
+        ).strip() or "FORCE_HEDGED_EXIT_UNBLOCK"
+        self.finals_jitter_enabled = os.getenv("FINALS_JITTER_ENABLED", "false").lower() == "true"
+        self.finals_jitter_max_delay_s = max(0.0, float(os.getenv("FINALS_JITTER_MAX_DELAY_S", "6.0")))
+        self.finals_size_jitter_pct = max(0.0, min(0.50, float(os.getenv("FINALS_SIZE_JITTER_PCT", "0.04"))))
+        self.finals_trigger_epsilon_bps = max(0.0, float(os.getenv("FINALS_TRIGGER_EPSILON_BPS", "8")))
+        self.finals_jitter_stale_seconds = max(
+            10.0, float(os.getenv("FINALS_JITTER_STALE_SECONDS", "45"))
+        )
+        self._exit_ai_log_wired_emitted = False
+        self.position_size_multiplier = 1.0
+        self.last_daily_pnl = 0.0
+        self.gamma_mode = False
+        self.gamma_params = {
+            "breakout_threshold": 0.025,
+            "initial_stop_loss": 0.015,
+            "trail_activation": 0.008,
+            "trail_distance": 0.015,
+            "time_stop_seconds": 1800,
+            "position_size_multiplier": 1.5,
+        }
+
+        self._states: Dict[str, Dict] = {}
+        self._clear_flag_path = "/tmp/clear_straddles.flag"
+        self._reconcile_target_symbols = {
+            "cmt_btcusdt",
+            "cmt_ethusdt",
+            "cmt_solusdt",
+            "cmt_dogeusdt",
+            "cmt_xrpusdt",
+            "cmt_adausdt",
+            "cmt_bnbusdt",
+            "cmt_ltcusdt",
+        }
+
+    def _get_state(self, symbol: str) -> Dict:
+        return self._states.setdefault(symbol, {
+            "symbol": symbol,
+            "state": self.STATE_IDLE,
+            "entry_price": 0.0,
+            "entry_time": 0.0,
+            "size": 0.0,
+            "breakout_pct": self.breakout_pct,
+            "initial_stop_loss_pct": self.initial_stop_loss_pct,
+            "trail_activation_pct": self.trail_activation_pct,
+            "trail_pct": self.trail_pct,
+            "max_hold_seconds": self.max_hold_seconds,
+            "atr_ratio": 1.0,
+            "realized_pnl": 0.0,
+            "realized_pnl_net": 0.0,
+            "fees_estimated_total": 0.0,
+            "pnl_applied": False,
+            "peak_price": 0.0,
+            "trough_price": 0.0,
+            "runner_start_time": 0.0,
+            "last_action_ts": 0.0,
+            "last_update_ts": 0.0,
+            "last_price": 0.0,
+            "cooldown_until": 0.0,
+            "reconcile_checked": False,
+            "long_size": 0.0,
+            "short_size": 0.0,
+            "last_exit_reason": "unknown",
+            "closed_trade_recorded": False,
+            "runner_side": "LONG",
+            "last_stale_cleanup_check_ts": 0.0,
+            "finals_jitter_seed_key": "",
+            "finals_jitter_armed_ts": 0.0,
+            "finals_jitter_release_ts": 0.0,
+            "finals_jitter_stale_after_ts": 0.0,
+            "finals_jitter_delay_s": 0.0,
+            "finals_jitter_size_factor": 1.0,
+            "finals_jitter_eps_bps": 0.0,
+            "finals_jitter_eps": 0.0,
+        })
+
+    def _reset_if_ready(self, state: Dict, now: float):
+        if state["state"] == self.STATE_DONE:
+            state["state"] = self.STATE_IDLE
+        if state["state"] == self.STATE_COOLDOWN and now >= state["cooldown_until"]:
+            logger.info("🟢 STRADDLE COOLDOWN CLEARED")
+            state["state"] = self.STATE_IDLE
+
+    def _maybe_adopt_from_ledger(self, symbol: str, price: float) -> bool:
+        if not self.position_ledger:
+            return False
+        ledger_pos = self.position_ledger.get_position(symbol)
+        if not getattr(ledger_pos, "side", None) or ledger_pos.side == "FLAT":
+            return False
+
+        state = self._get_state(symbol)
+        if state.get("adopted_from_ledger"):
+            logger.warning("✅ STRADDLE_ALREADY_ADOPTED symbol={}", symbol)
+            return True
+        if state["state"] in {self.STATE_RUNNER_LONG, self.STATE_RUNNER_SHORT}:
+            return True
+        if state["state"] == self.STATE_HEDGED:
+            logger.warning(
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} reason=state_hedged",
+                symbol,
+            )
+            return False
+
+        side = getattr(ledger_pos, "side", None)
+        size = float(getattr(ledger_pos, "size", 0) or 0)
+        entry_time = float(getattr(ledger_pos, "open_time", 0) or 0)
+        entry_price = float(getattr(ledger_pos, "entry_price", 0) or 0)
+        ledger_entry_reason = self._normalize_entry_reason(getattr(ledger_pos, "entry_reason", None))
+        ledger_entry_regime_raw = getattr(ledger_pos, "entry_regime", None)
+        ledger_entry_regime = str(ledger_entry_regime_raw).strip().lower() if ledger_entry_regime_raw is not None else ""
+        if not ledger_entry_regime:
+            ledger_entry_regime = "unknown"
+        age_sec = None
+        try:
+            age_sec = int(time.time() - entry_time) if entry_time else None
+        except Exception:
+            age_sec = None
+
+        adoption_window_sec = 72 * 60 * 60
+
+        if side not in ("LONG", "SHORT"):
+            logger.warning(
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=unknown_side",
+                symbol, side, size, age_sec
+            )
+            return False
+        if size <= 0:
+            logger.warning(
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=zero_size",
+                symbol, side, size, age_sec
+            )
+            return False
+        if age_sec is not None and age_sec > adoption_window_sec:
+            logger.warning(
+                "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=too_old",
+                symbol, side, size, age_sec
+            )
+            return False
+
+        runner_state = self.STATE_RUNNER_LONG if side == "LONG" else self.STATE_RUNNER_SHORT
+        cur_price = price if price and price > 0 else entry_price
+        now_ts = time.time()
+
+        state["state"] = runner_state
+        state["runner_side"] = side
+        state["entry_price"] = entry_price
+        state["entry_time"] = entry_time or now_ts
+        state["size"] = size
+        state["runner_start_time"] = entry_time or now_ts
+        state["peak_price"] = cur_price
+        state["trough_price"] = cur_price
+        state["last_price"] = cur_price
+        state["last_update_ts"] = now_ts
+        state["reconcile_checked"] = True
+        state["adopted_from_ledger"] = True
+        state["entry_reason"] = ledger_entry_reason
+        state["entry_regime"] = ledger_entry_regime
+        entry_meta = state.get("entry_meta")
+        if not isinstance(entry_meta, dict):
+            entry_meta = {}
+        entry_meta.setdefault("entry_reason", ledger_entry_reason)
+        entry_meta["regime"] = ledger_entry_regime
+        state["entry_meta"] = entry_meta
+        state["adopted_ts"] = now_ts
+
+        logger.warning(
+            "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} entry_price={} runner_state={} entry_reason={} entry_regime={}",
+            symbol, side, size, age_sec, entry_price, runner_state, ledger_entry_reason, ledger_entry_regime
+        )
+        return True
+
+
+    def _can_act(self, state: Dict, now: float) -> bool:
+        return (now - state["last_action_ts"]) >= self.min_action_interval
+
+    def _mark_action(self, state: Dict, now: float):
+        state["last_action_ts"] = now
+
+    def _finals_jitter_u01(self, key: str) -> float:
+        digest = hashlib.sha256(key.encode("utf-8")).digest()
+        value = int.from_bytes(digest[:8], "big")
+        return (value % 10_000_000) / 10_000_000.0
+
+    def _clear_finals_jitter(self, state: Dict) -> None:
+        state["finals_jitter_seed_key"] = ""
+        state["finals_jitter_armed_ts"] = 0.0
+        state["finals_jitter_release_ts"] = 0.0
+        state["finals_jitter_stale_after_ts"] = 0.0
+        state["finals_jitter_delay_s"] = 0.0
+        state["finals_jitter_size_factor"] = 1.0
+        state["finals_jitter_eps_bps"] = 0.0
+        state["finals_jitter_eps"] = 0.0
+
+    def _arm_or_release_finals_jitter(
+        self,
+        symbol: str,
+        state: Dict,
+        entry_reason: str,
+        entry_side: str,
+        now: float,
+    ) -> Tuple[bool, float, float, float]:
+        if not self.finals_jitter_enabled:
+            return True, 1.0, 0.0, 0.0
+
+        hour_bucket = int(now // 3600)
+        seed_key = f"{symbol}|{entry_side}|{entry_reason}|{hour_bucket}"
+        existing_seed = str(state.get("finals_jitter_seed_key") or "")
+        release_ts = float(state.get("finals_jitter_release_ts") or 0.0)
+
+        if existing_seed != seed_key or release_ts <= 0.0:
+            u = self._finals_jitter_u01(seed_key)
+            delay_s = self.finals_jitter_max_delay_s * u
+            size_factor = (1.0 - (self.finals_size_jitter_pct / 2.0)) + (self.finals_size_jitter_pct * u)
+            size_floor = 1.0 - (self.finals_size_jitter_pct / 2.0)
+            size_ceiling = 1.0 + (self.finals_size_jitter_pct / 2.0)
+            size_factor = max(size_floor, min(size_ceiling, size_factor))
+            eps_bps = self.finals_trigger_epsilon_bps * u
+            eps = eps_bps / 10_000.0
+
+            state["finals_jitter_seed_key"] = seed_key
+            state["finals_jitter_armed_ts"] = now
+            state["finals_jitter_release_ts"] = now + delay_s
+            state["finals_jitter_stale_after_ts"] = now + delay_s + self.finals_jitter_stale_seconds
+            state["finals_jitter_delay_s"] = delay_s
+            state["finals_jitter_size_factor"] = size_factor
+            state["finals_jitter_eps_bps"] = eps_bps
+            state["finals_jitter_eps"] = eps
+            logger.info(
+                "FINALS_JITTER_ARM symbol={} side={} delay_s={:.3f} size_factor={:.5f} eps_bps={:.3f} reason={}",
+                symbol,
+                entry_side,
+                delay_s,
+                size_factor,
+                eps_bps,
+                entry_reason,
+            )
+            return False, size_factor, eps_bps, eps
+
+        if now < release_ts:
+            return False, float(state.get("finals_jitter_size_factor", 1.0) or 1.0), float(
+                state.get("finals_jitter_eps_bps", 0.0) or 0.0
+            ), float(state.get("finals_jitter_eps", 0.0) or 0.0)
+
+        armed_ts = float(state.get("finals_jitter_armed_ts") or now)
+        waited_s = max(0.0, now - armed_ts)
+        size_factor = float(state.get("finals_jitter_size_factor", 1.0) or 1.0)
+        eps_bps = float(state.get("finals_jitter_eps_bps", 0.0) or 0.0)
+        eps = float(state.get("finals_jitter_eps", 0.0) or 0.0)
+        logger.info(
+            "FINALS_JITTER_RELEASE symbol={} side={} waited_s={:.3f}",
+            symbol,
+            entry_side,
+            waited_s,
+        )
+        self._clear_finals_jitter(state)
+        return True, size_factor, eps_bps, eps
+
+    def _maybe_cleanup_stale_adopted_runner(self, symbol: str, state: Dict, now: float) -> bool:
+        current_state = state.get("state")
+        if current_state not in {self.STATE_RUNNER_LONG, self.STATE_RUNNER_SHORT}:
+            return False
+        if not bool(state.get("adopted_from_ledger")):
+            return False
+
+        last_check_ts = float(state.get("last_stale_cleanup_check_ts") or 0.0)
+        if (now - last_check_ts) < self.stale_runner_cleanup_interval_seconds:
+            return False
+        state["last_stale_cleanup_check_ts"] = now
+
+        entry_time = float(state.get("entry_time") or 0.0)
+        if entry_time <= 0:
+            return False
+        age_seconds = now - entry_time
+        if age_seconds < self.stale_adopted_runner_max_age_seconds:
+            return False
+
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
+        entry_regime = self._extract_entry_regime(state)
+        size = float(state.get("size") or 0.0)
+        entry_price = float(state.get("entry_price") or 0.0)
+        last_price = float(state.get("last_price") or entry_price or 0.0)
+
+        logger.warning(
+            "🧹 STALE_ADOPTED_RUNNER_TIMEOUT symbol={} age_minutes={:.1f} state={} entry_reason={} entry_regime={}",
+            symbol,
+            age_seconds / 60.0,
+            current_state,
+            entry_reason,
+            entry_regime,
+        )
+
+        if size <= 0:
+            logger.warning(
+                "STALE_ADOPTED_RUNNER_CLOSE_RESULT symbol={} ok=False reason=invalid_size size={}",
+                symbol,
+                size,
+            )
+            return False
+
+        if not self._can_act(state, now):
+            logger.info("STALE_ADOPTED_RUNNER_CLOSE_SKIPPED symbol={} reason=action_throttle", symbol)
+            return False
+
+        self._emit_exit_ai_log(
+            stage="Exit Decision",
+            symbol=symbol,
+            reason="STALE_ADOPTED_RUNNER_TIMEOUT",
+            input_payload={
+                "symbol": symbol,
+                "state": current_state,
+                "entry_time": entry_time,
+                "entry_price": entry_price,
+                "last_price": last_price,
+                "size": size,
+                "entry_reason": entry_reason,
+                "regime": entry_regime,
+            },
+            output_payload={"action": "close_runner"},
+        )
+        logger.warning(
+            "STALE_ADOPTED_RUNNER_CLOSE_ATTEMPT symbol={} state={} size={} age_seconds={}",
+            symbol,
+            current_state,
+            size,
+            int(age_seconds),
+        )
+
+        pnl_delta = 0.0
+        if entry_price > 0.0:
+            if current_state == self.STATE_RUNNER_LONG:
+                pnl_delta = (last_price - entry_price) * size
+            else:
+                pnl_delta = (entry_price - last_price) * size
+        state["realized_pnl"] = float(state.get("realized_pnl") or 0.0) + pnl_delta
+
+        if current_state == self.STATE_RUNNER_LONG:
+            success = self._close_long(symbol, size, state, reason="STALE_ADOPTED_RUNNER_TIMEOUT")
+        else:
+            success = self._close_short(symbol, size, state, reason="STALE_ADOPTED_RUNNER_TIMEOUT")
+
+        if not success and pnl_delta:
+            state["realized_pnl"] = float(state.get("realized_pnl") or 0.0) - pnl_delta
+
+        self._mark_action(state, now)
+        logger.warning(
+            "STALE_ADOPTED_RUNNER_CLOSE_RESULT symbol={} ok={} state={} reason=STALE_ADOPTED_RUNNER_TIMEOUT",
+            symbol,
+            success,
+            current_state,
+        )
+
+        if success:
+            state["state"] = self.STATE_DONE
+            self._maybe_apply_compound(state)
+            logger.info("STALE_RUNNER_CLEANUP_COMPLETED symbol={} freed_slots=1", symbol)
+            return True
+
+        return False
+
+    def _order_success(self, result: Dict) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("dry_run"):
+            return True
+        if "order_id" in result or "client_oid" in result:
+            return True
+        data = result.get("data")
+        if isinstance(data, dict) and ("orderId" in data or "order_id" in data):
+            return True
+        return False
+
+    def _is_40015(self, result: Dict) -> bool:
+        if not isinstance(result, dict):
+            return False
+        for key in ("code", "status_code", "error", "msg", "message"):
+            value = result.get(key)
+            if value is not None and "40015" in str(value):
+                return True
+        return False
+
+    def _place_order(self, symbol: str, side: int, size: float) -> Dict:
+        if self.dry_run:
+            logger.info(f"🟡 DRY_RUN: Would place order side={side} size={size:.6f} {symbol}")
+            return {"dry_run": True, "client_oid": f"dry_run_{symbol}_{int(time.time())}"}
+        return self.weex.place_order(symbol=symbol, side=side, size=size, is_market=True)
+
+    def _extract_order_refs(self, result: Dict) -> Dict[str, str]:
+        if not isinstance(result, dict):
+            return {}
+        ref = {}
+        if result.get("order_id"):
+            ref["order_id"] = str(result.get("order_id"))
+        if result.get("client_oid"):
+            ref["client_oid"] = str(result.get("client_oid"))
+        data = result.get("data")
+        if isinstance(data, dict):
+            if data.get("orderId"):
+                ref["order_id"] = str(data.get("orderId"))
+            if data.get("order_id"):
+                ref["order_id"] = str(data.get("order_id"))
+        return ref
+
+    def _extract_orders_payload(self, response: Any) -> List[Dict]:
+        if not isinstance(response, dict):
+            if isinstance(response, list):
+                return [row for row in response if isinstance(row, dict)]
+            return []
+        data = response.get("data")
+        if data is None:
+            data = response
+        if isinstance(data, dict):
+            for key in ("orders", "list", "rows", "data"):
+                block = data.get(key)
+                if isinstance(block, list):
+                    return [row for row in block if isinstance(row, dict)]
+            if {"order_id", "orderId", "id"} & set(data.keys()):
+                return [data]
+            return []
+        if isinstance(data, list):
+            return [row for row in data if isinstance(row, dict)]
+        return []
+
+    def _extract_order_id(self, order: Dict[str, Any]) -> Optional[str]:
+        if not isinstance(order, dict):
+            return None
+        for key in ("order_id", "orderId", "id", "oid", "client_oid", "clientOid"):
+            value = order.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    def _cancel_open_orders_for_symbol(self, symbol: str) -> Dict[str, int]:
+        cancelled = 0
+        failed = 0
+        attempted = 0
+        total_open = 0
+
+        if self.dry_run:
+            return {"open_orders": 0, "attempted": 0, "cancelled": 0, "failed": 0}
+
+        try:
+            response = self.weex.get_open_orders(symbol=symbol)
+        except Exception as exc:
+            logger.warning("CLOSE_40015_OPEN_ORDERS_FETCH_FAIL symbol={} err={}", symbol, exc)
+            return {"open_orders": 0, "attempted": 0, "cancelled": 0, "failed": 1}
+
+        open_orders = self._extract_orders_payload(response)
+        total_open = len(open_orders)
+        for order in open_orders:
+            order_id = self._extract_order_id(order)
+            if not order_id:
+                failed += 1
+                continue
+            attempted += 1
+            try:
+                cancel_result = self.weex.cancel_order(symbol=symbol, order_id=order_id)
+            except Exception as exc:
+                failed += 1
+                logger.warning(
+                    "CLOSE_40015_CANCEL_CONFLICTING symbol={} order_id={} ok=False err={}",
+                    symbol,
+                    order_id,
+                    exc,
+                )
+                continue
+            if isinstance(cancel_result, dict):
+                code = str(cancel_result.get("code", ""))
+                msg = str(cancel_result.get("msg", "")).lower()
+                if code and code not in ("0", "200", "success"):
+                    if "not exist" in msg or "already" in msg:
+                        cancelled += 1
+                    else:
+                        failed += 1
+                else:
+                    cancelled += 1
+            else:
+                cancelled += 1
+
+        return {
+            "open_orders": total_open,
+            "attempted": attempted,
+            "cancelled": cancelled,
+            "failed": failed,
+        }
+
+    def _get_exchange_position_snapshot(self, symbol: str) -> Dict[str, Any]:
+        response = self.weex.get_position(symbol)
+        positions = self._extract_positions_payload(response)
+        long_size = 0.0
+        short_size = 0.0
+        for pos in positions:
+            pos_symbol = pos.get("symbol") if isinstance(pos, dict) else None
+            if pos_symbol and pos_symbol != symbol:
+                continue
+            size = self._extract_position_size(pos)
+            if size == 0:
+                continue
+            side = self._extract_position_side(pos)
+            if not side and size < 0:
+                side = "SHORT"
+            if side == "LONG":
+                long_size += abs(size)
+            elif side == "SHORT":
+                short_size += abs(size)
+
+        has_position = (long_size > 0.0) or (short_size > 0.0)
+        if long_size > 0.0 and short_size == 0.0:
+            position_side = "LONG"
+            close_side = 3
+            close_size = long_size
+        elif short_size > 0.0 and long_size == 0.0:
+            position_side = "SHORT"
+            close_side = 4
+            close_size = short_size
+        elif long_size > 0.0 and short_size > 0.0:
+            position_side = "HEDGED"
+            if long_size >= short_size:
+                close_side = 3
+                close_size = long_size
+            else:
+                close_side = 4
+                close_size = short_size
+        else:
+            position_side = "FLAT"
+            close_side = None
+            close_size = 0.0
+
+        return {
+            "has_position": has_position,
+            "position_side": position_side,
+            "long_size": float(long_size),
+            "short_size": float(short_size),
+            "close_side": close_side,
+            "close_size": float(close_size),
+        }
+
+    def _force_flatten_ledger_position(self, symbol: str, state: Dict, reason: str) -> bool:
+        if not self.position_ledger:
+            return True
+        try:
+            ledger_pos = self.position_ledger.get_position(symbol)
+        except Exception as exc:
+            logger.warning("CLOSE_40015_LEDGER_READ_FAIL symbol={} err={}", symbol, exc)
+            return False
+        if getattr(ledger_pos, "side", "FLAT") == "FLAT":
+            return True
+
+        close_price = float(state.get("last_price") or state.get("entry_price") or getattr(ledger_pos, "entry_price", 0.0) or 0.0)
+        try:
+            self.position_ledger.close_position(
+                symbol=symbol,
+                close_price=close_price,
+                realized_pnl=0.0,
+                close_reason=reason,
+                fees_estimated=0.0,
+            )
+            state["closed_trade_recorded"] = True
+            state["last_exit_reason"] = reason
+            logger.warning(
+                "CLOSE_40015_EXCHANGE_FLAT_FORCE_LOCAL_CLOSE symbol={} ledger_side={} close_price={:.6f} reason={}",
+                symbol,
+                getattr(ledger_pos, "side", "unknown"),
+                close_price,
+                reason,
+            )
+            return True
+        except Exception as exc:
+            logger.error("CLOSE_40015_EXCHANGE_FLAT_FORCE_LOCAL_CLOSE_FAIL symbol={} err={}", symbol, exc)
+            return False
+
+    def _reconcile_close_after_40015(
+        self,
+        symbol: str,
+        attempted_close_side: int,
+        requested_size: float,
+        state: Dict,
+        reason: str,
+    ) -> Dict[str, Any]:
+        logger.warning(
+            "CLOSE_40015_RECONCILE_ATTEMPT symbol={} attempted_side={} requested_size={:.8f} reason={}",
+            symbol,
+            attempted_close_side,
+            float(requested_size or 0.0),
+            reason,
+        )
+        if self.dry_run:
+            return {"resolved": False, "force_success": False, "mode": "dry_run", "result": None}
+
+        try:
+            before = self._get_exchange_position_snapshot(symbol)
+        except Exception as exc:
+            logger.error("CLOSE_40015_RECONCILE_FAILED symbol={} stage=position_fetch err={}", symbol, exc)
+            return {"resolved": False, "force_success": False, "mode": "position_fetch_failed", "result": None}
+
+        logger.warning(
+            "CLOSE_40015_EXCHANGE_POS symbol={} position_side={} long_size={:.8f} short_size={:.8f}",
+            symbol,
+            before.get("position_side"),
+            float(before.get("long_size") or 0.0),
+            float(before.get("short_size") or 0.0),
+        )
+
+        if not before.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat",
+                "result": {"reconcile_mode": "exchange_flat", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        cancel_stats = self._cancel_open_orders_for_symbol(symbol)
+        logger.warning(
+            "CLOSE_40015_OPEN_ORDERS symbol={} open_orders={} attempted={} cancelled={} failed={}",
+            symbol,
+            int(cancel_stats.get("open_orders", 0)),
+            int(cancel_stats.get("attempted", 0)),
+            int(cancel_stats.get("cancelled", 0)),
+            int(cancel_stats.get("failed", 0)),
+        )
+
+        if self.close_reconcile_pause_seconds > 0:
+            time.sleep(self.close_reconcile_pause_seconds)
+
+        try:
+            after_cancel = self._get_exchange_position_snapshot(symbol)
+        except Exception as exc:
+            logger.error("CLOSE_40015_RECONCILE_FAILED symbol={} stage=post_cancel_fetch err={}", symbol, exc)
+            return {"resolved": False, "force_success": False, "mode": "post_cancel_fetch_failed", "result": None}
+
+        if not after_cancel.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat_after_cancel",
+                "result": {"reconcile_mode": "exchange_flat_after_cancel", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        close_side = after_cancel.get("close_side") or attempted_close_side
+        close_size = float(after_cancel.get("close_size") or 0.0)
+        if close_size <= 0:
+            close_size = float(requested_size or 0.0)
+        if close_size <= 0:
+            return {"resolved": False, "force_success": False, "mode": "invalid_close_size", "result": None}
+        if requested_size and requested_size > 0:
+            close_size = min(close_size, float(requested_size))
+
+        logger.warning(
+            "CLOSE_40015_RETRY_FLATTEN symbol={} close_side={} close_size={:.8f} exchange_side={}",
+            symbol,
+            close_side,
+            close_size,
+            after_cancel.get("position_side"),
+        )
+        retry_result = self._place_order(symbol=symbol, side=int(close_side), size=float(close_size))
+        retry_success = self._order_success(retry_result) and (not self._is_40015(retry_result))
+        logger.warning(
+            "CLOSE_40015_RECONCILE_RESULT symbol={} ok={} code={} msg={}",
+            symbol,
+            retry_success,
+            retry_result.get("code") if isinstance(retry_result, dict) else None,
+            str(retry_result.get("msg") or retry_result.get("error") or "")[:220] if isinstance(retry_result, dict) else None,
+        )
+        if retry_success:
+            return {"resolved": True, "force_success": False, "mode": "retry_success", "result": retry_result}
+
+        try:
+            final_snapshot = self._get_exchange_position_snapshot(symbol)
+        except Exception:
+            final_snapshot = {"has_position": True}
+        if not final_snapshot.get("has_position"):
+            resolved = self._force_flatten_ledger_position(symbol, state, reason="exchange_reconcile_flat")
+            return {
+                "resolved": resolved,
+                "force_success": resolved,
+                "mode": "exchange_flat_after_retry",
+                "result": {"reconcile_mode": "exchange_flat_after_retry", "code": "RECONCILED_EXCHANGE_FLAT"},
+            }
+
+        return {"resolved": False, "force_success": False, "mode": "retry_failed", "result": retry_result}
+
+    def _log_exit_attribution(self, symbol: str, reason: str, state: Dict, exit_ref: Dict):
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
+        entry_meta = state.get("entry_meta") or {}
+        entry_regime = self._extract_entry_regime(state)
+        payload = {
+            "entry_reason": entry_reason,
+            "regime": entry_regime,
+            "entry_order_ids": state.get("entry_order_ids") or [],
+            "exit_order_ids": state.get("exit_order_ids") or ([] if not exit_ref else [exit_ref]),
+            "entry_meta": entry_meta,
+            "entry_price": state.get("entry_price"),
+            "last_price": state.get("last_price"),
+            "realized_pnl": state.get("realized_pnl"),
+            "realized_pnl_net": state.get("realized_pnl_net"),
+            "fees_estimated_total": state.get("fees_estimated_total"),
+        }
+        payload = self._sanitize_payload(payload)
+        try:
+            import json
+            payload_json = json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
+        except Exception:
+            payload_json = str(payload)
+        logger.info(
+            "AI_EXIT_LOG symbol={} exit_reason={} entry_reason={} entry_order_ids={} exit_order_ids={} payload={}",
+            symbol,
+            reason,
+            entry_reason,
+            payload.get("entry_order_ids"),
+            payload.get("exit_order_ids"),
+            payload_json,
+        )
+
+    def _normalize_entry_reason(self, entry_reason: Any) -> str:
+        if entry_reason is None:
+            return "LEGACY_NONE"
+        normalized = str(entry_reason).strip()
+        return normalized if normalized else "LEGACY_NONE"
+
+    def _extract_entry_regime(self, state: Dict) -> str:
+        if not isinstance(state, dict):
+            return "unknown"
+        entry_regime = state.get("entry_regime")
+        if entry_regime:
+            return str(entry_regime)
+        entry_meta = state.get("entry_meta")
+        if isinstance(entry_meta, dict):
+            regime = entry_meta.get("regime")
+            if regime:
+                return str(regime)
+        return "unknown"
+
+    def _estimate_close_fee(self, size: float, price: float) -> float:
+        if size is None or price is None:
+            return 0.0
+        try:
+            return abs(float(size)) * abs(float(price)) * self.estimated_taker_fee_rate
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _refresh_realized_pnl_snapshot(self, state: Dict) -> Tuple[float, float, float]:
+        realized_gross = float(state.get("realized_pnl") or 0.0)
+        fees_total = float(state.get("fees_estimated_total") or 0.0)
+        realized_net = realized_gross - fees_total
+        state["realized_pnl_net"] = realized_net
+        return realized_gross, fees_total, realized_net
+
+    def _record_closed_trade_for_ledger(self, state: Dict) -> None:
+        if not self.position_ledger:
+            return
+        if state.get("closed_trade_recorded"):
+            return
+        symbol = state.get("symbol")
+        if not symbol:
+            return
+        entry_price = float(state.get("entry_price") or 0.0)
+        close_price = float(state.get("last_price") or entry_price or 0.0)
+        size = float(state.get("size") or 0.0)
+        entry_time = float(state.get("entry_time") or 0.0)
+        close_time = float(state.get("last_update_ts") or time.time())
+        entry_reason = self._normalize_entry_reason(state.get("entry_reason"))
+        entry_regime = self._extract_entry_regime(state)
+        close_reason = str(state.get("last_exit_reason") or "unknown")
+        side = str(state.get("runner_side") or "LONG").upper()
+        if side not in ("LONG", "SHORT"):
+            side = "LONG"
+        _, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        try:
+            self.position_ledger.record_closed_trade(
+                symbol=symbol,
+                side=side,
+                size=size,
+                entry_price=entry_price,
+                close_price=close_price,
+                realized_pnl=realized_net,
+                close_reason=close_reason,
+                entry_reason=entry_reason,
+                entry_regime=entry_regime,
+                fees_estimated=fees_total,
+                pnl_is_net=True,
+                open_time=entry_time,
+                close_time=close_time,
+                position_id=f"straddle:{symbol}:{int(entry_time * 1000)}:{entry_reason}",
+            )
+            state["closed_trade_recorded"] = True
+        except Exception as exc:
+            logger.warning(
+                "STRADDLE_LEDGER_RECORD_FAILED symbol={} reason={} err={}",
+                symbol,
+                close_reason,
+                exc,
+            )
+
+    def _sanitize_payload(self, payload: Any) -> Any:
+        try:
+            import numpy as np
+        except Exception:
+            np = None
+        if payload is None:
+            return None
+        if isinstance(payload, (str, int, float, bool)):
+            return payload
+        if np is not None:
+            if isinstance(payload, np.generic):
+                try:
+                    return payload.item()
+                except Exception:
+                    return str(payload)
+            if isinstance(payload, np.ndarray):
+                return [self._sanitize_payload(x) for x in payload.tolist()]
+        if isinstance(payload, dict):
+            return {str(k): self._sanitize_payload(v) for k, v in payload.items()}
+        if isinstance(payload, (list, tuple, set)):
+            return [self._sanitize_payload(v) for v in payload]
+        try:
+            return str(payload)
+        except Exception:
+            return repr(payload)
+
+    def _enter_cooldown(self, state: Dict, reason: str):
+        state["state"] = self.STATE_COOLDOWN
+        state["cooldown_until"] = time.time() + self.cooldown_seconds
+        logger.warning(f"⚠ STRADDLE ABORTED ({reason})")
+
+    def _emit_exit_ai_log(
+        self,
+        stage: str,
+        symbol: str,
+        reason: str,
+        input_payload: Dict[str, Any],
+        output_payload: Optional[Dict[str, Any]] = None,
+        order_id: Optional[str] = None,
+    ) -> None:
+        if not self.ai_log_bus:
+            return
+        try:
+            now = time.time()
+            state_ctx = self._get_state(symbol)
+            entry_reason = self._normalize_entry_reason(input_payload.get("entry_reason"))
+            if entry_reason == "LEGACY_NONE":
+                entry_reason = self._normalize_entry_reason(state_ctx.get("entry_reason"))
+            if entry_reason == "LEGACY_NONE" and stage.startswith("Exit"):
+                logger.warning(
+                    "ATTRIBUTION_WARNING symbol={} stage={} reason={} fallback_entry_reason=LEGACY_NONE",
+                    symbol,
+                    stage,
+                    reason,
+                )
+            regime = input_payload.get("regime")
+            if not regime:
+                regime = self._extract_entry_regime(state_ctx)
+            entry_time = input_payload.get("entry_time")
+            age_s = input_payload.get("age_s")
+            if age_s is None and entry_time:
+                age_s = now - entry_time
+            entry_price = input_payload.get("entry_price")
+            last_price = input_payload.get("last_price")
+            move_pct = input_payload.get("move_pct")
+            if move_pct is None and entry_price and last_price:
+                move_pct = abs(last_price - entry_price) / entry_price * 100.0
+            realized_pnl = input_payload.get("realized_pnl")
+            if realized_pnl is None:
+                realized_pnl = state_ctx.get("realized_pnl_net")
+            if realized_pnl is None:
+                realized_pnl = state_ctx.get("realized_pnl")
+            fees_estimated = input_payload.get("fees_estimated")
+            if fees_estimated is None:
+                fees_estimated = state_ctx.get("fees_estimated_total")
+            realized_pnl_gross = input_payload.get("realized_pnl_gross")
+            if realized_pnl_gross is None:
+                realized_pnl_gross = state_ctx.get("realized_pnl")
+
+            stop_tp_context = {
+                "stop_loss": input_payload.get("stop_loss"),
+                "take_profit": input_payload.get("take_profit"),
+            }
+            input_payload.update({
+                "exit_reason": reason,
+                "age_seconds": age_s,
+                "move_pct": move_pct,
+                "entry_reason": entry_reason,
+                "regime": regime,
+                "realized_pnl": realized_pnl,
+                "realized_pnl_gross": realized_pnl_gross,
+                "fees_estimated": fees_estimated,
+                "stop_tp_context": stop_tp_context,
+            })
+            output_payload = output_payload or {}
+            output_payload.update({
+                "exit_reason": reason,
+                "entry_reason": entry_reason,
+                "regime": regime,
+                "age_seconds": age_s,
+                "move_pct": move_pct,
+                "realized_pnl": realized_pnl,
+                "realized_pnl_gross": realized_pnl_gross,
+                "fees_estimated": fees_estimated,
+                "stop_tp_context": stop_tp_context,
+            })
+            ctx = {
+                "state": input_payload.get("state"),
+                "entry_reason": entry_reason,
+                "regime": regime,
+                "entry_price": input_payload.get("entry_price"),
+                "last_price": input_payload.get("last_price"),
+                "size": input_payload.get("size"),
+                "age_s": age_s,
+                "move_pct": move_pct,
+                "realized_pnl": realized_pnl,
+                "fees_estimated": fees_estimated,
+                "stop_loss": input_payload.get("stop_loss"),
+                "take_profit": input_payload.get("take_profit"),
+            }
+            ctx_str = " ".join(f"{k}={v}" for k, v in ctx.items() if v is not None)
+            explanation = (
+                "Exit: reason={reason} entry_reason={entry_reason} age_s={age_s} move_pct={move_pct}; "
+                "pnl={realized_pnl} fees={fees_estimated}; stop={stop_loss} tp={take_profit}."
+            ).format(
+                reason=reason,
+                entry_reason=entry_reason,
+                age_s=age_s,
+                move_pct=move_pct,
+                realized_pnl=realized_pnl,
+                fees_estimated=fees_estimated,
+                stop_loss=input_payload.get("stop_loss"),
+                take_profit=input_payload.get("take_profit"),
+            )[:1000]
+            self.ai_log_bus.emit(
+                stage=stage,
+                model="SDM:Straddle",
+                input_payload=input_payload,
+                output_payload=output_payload,
+                explanation=explanation,
+                order_id=order_id,
+                meta={"reason": reason, "decision_factors": ctx},
+            )
+            logger.info("AI_EXIT_LOG stage={} symbol={} reason={}", stage, symbol, reason)
+            logger.info("AI_EXIT_LOG_DETAILS stage={} symbol={} reason={} {}", stage, symbol, reason, ctx_str)
+        except Exception as exc:
+            logger.warning(
+                "AI_EXIT_LOG_FAIL stage={} symbol={} reason={} err={}",
+                stage,
+                symbol,
+                reason,
+                exc,
+            )
+
+    def _close_long(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
+        result = self._place_order(symbol, side=3, size=size)
+        force_success = False
+        reconcile_mode = None
+        if self._is_40015(result):
+            reconcile = self._reconcile_close_after_40015(
+                symbol=symbol,
+                attempted_close_side=3,
+                requested_size=size,
+                state=state,
+                reason=reason,
+            )
+            reconcile_mode = reconcile.get("mode")
+            if reconcile.get("resolved"):
+                force_success = bool(reconcile.get("force_success"))
+                result = reconcile.get("result") if isinstance(reconcile.get("result"), dict) else result
+            else:
+                self._emit_exit_ai_log(
+                    stage="Exit Execution",
+                    symbol=symbol,
+                    reason=reason,
+                    input_payload={
+                        "symbol": symbol,
+                        "side": "LONG",
+                        "size": size,
+                        "state": state.get("state"),
+                        "entry_price": state.get("entry_price"),
+                        "last_price": state.get("last_price"),
+                        "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                        "regime": self._extract_entry_regime(state),
+                        "entry_meta": state.get("entry_meta"),
+                        "entry_order_ids": state.get("entry_order_ids"),
+                        "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                        "realized_pnl_gross": state.get("realized_pnl"),
+                        "fees_estimated": state.get("fees_estimated_total", 0.0),
+                    },
+                    output_payload={
+                        "side": 3,
+                        "size": size,
+                        "dry_run": self.dry_run,
+                        "success": False,
+                        "error_code": result.get("code") if isinstance(result, dict) else None,
+                        "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                        "reconcile_mode": reconcile_mode,
+                    },
+                )
+                self._enter_cooldown(state, "40015")
+                return False
+        success = force_success or self._order_success(result)
+        exit_ref = self._extract_order_refs(result)
+        if exit_ref:
+            state.setdefault("exit_order_ids", []).append(exit_ref)
+        close_price = state.get("last_price") or state.get("entry_price") or 0.0
+        fee_estimated = self._estimate_close_fee(size, close_price) if success else 0.0
+        if success:
+            state["fees_estimated_total"] = float(state.get("fees_estimated_total") or 0.0) + fee_estimated
+        realized_gross, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        state["last_exit_reason"] = reason
+        self._emit_exit_ai_log(
+            stage="Exit Execution",
+            symbol=symbol,
+            reason=reason,
+            input_payload={
+                "symbol": symbol,
+                "side": "LONG",
+                "size": size,
+                "state": state.get("state"),
+                "entry_price": state.get("entry_price"),
+                "last_price": state.get("last_price"),
+                "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                "regime": self._extract_entry_regime(state),
+                "entry_meta": state.get("entry_meta"),
+                "entry_order_ids": state.get("entry_order_ids"),
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+            },
+            output_payload={
+                "side": 3,
+                "size": size,
+                "dry_run": self.dry_run,
+                "success": success,
+                "order_id": exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+                "client_oid": exit_ref.get("client_oid") if isinstance(exit_ref, dict) else None,
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+                "reconcile_mode": reconcile_mode,
+            },
+            order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+        )
+        self._log_exit_attribution(symbol, reason, state, exit_ref)
+        return success
+
+    def _close_short(self, symbol: str, size: float, state: Dict, reason: str = "unspecified") -> bool:
+        result = self._place_order(symbol, side=4, size=size)
+        force_success = False
+        reconcile_mode = None
+        if self._is_40015(result):
+            reconcile = self._reconcile_close_after_40015(
+                symbol=symbol,
+                attempted_close_side=4,
+                requested_size=size,
+                state=state,
+                reason=reason,
+            )
+            reconcile_mode = reconcile.get("mode")
+            if reconcile.get("resolved"):
+                force_success = bool(reconcile.get("force_success"))
+                result = reconcile.get("result") if isinstance(reconcile.get("result"), dict) else result
+            else:
+                self._emit_exit_ai_log(
+                    stage="Exit Execution",
+                    symbol=symbol,
+                    reason=reason,
+                    input_payload={
+                        "symbol": symbol,
+                        "side": "SHORT",
+                        "size": size,
+                        "state": state.get("state"),
+                        "entry_price": state.get("entry_price"),
+                        "last_price": state.get("last_price"),
+                        "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                        "regime": self._extract_entry_regime(state),
+                        "entry_meta": state.get("entry_meta"),
+                        "entry_order_ids": state.get("entry_order_ids"),
+                        "realized_pnl": state.get("realized_pnl_net", state.get("realized_pnl")),
+                        "realized_pnl_gross": state.get("realized_pnl"),
+                        "fees_estimated": state.get("fees_estimated_total", 0.0),
+                    },
+                    output_payload={
+                        "side": 4,
+                        "size": size,
+                        "dry_run": self.dry_run,
+                        "success": False,
+                        "error_code": result.get("code") if isinstance(result, dict) else None,
+                        "error_msg": result.get("msg") if isinstance(result, dict) else None,
+                        "reconcile_mode": reconcile_mode,
+                    },
+                )
+                self._enter_cooldown(state, "40015")
+                return False
+        success = force_success or self._order_success(result)
+        exit_ref = self._extract_order_refs(result)
+        if exit_ref:
+            state.setdefault("exit_order_ids", []).append(exit_ref)
+        close_price = state.get("last_price") or state.get("entry_price") or 0.0
+        fee_estimated = self._estimate_close_fee(size, close_price) if success else 0.0
+        if success:
+            state["fees_estimated_total"] = float(state.get("fees_estimated_total") or 0.0) + fee_estimated
+        realized_gross, fees_total, realized_net = self._refresh_realized_pnl_snapshot(state)
+        state["last_exit_reason"] = reason
+        self._emit_exit_ai_log(
+            stage="Exit Execution",
+            symbol=symbol,
+            reason=reason,
+            input_payload={
+                "symbol": symbol,
+                "side": "SHORT",
+                "size": size,
+                "state": state.get("state"),
+                "entry_price": state.get("entry_price"),
+                "last_price": state.get("last_price"),
+                "entry_reason": self._normalize_entry_reason(state.get("entry_reason")),
+                "regime": self._extract_entry_regime(state),
+                "entry_meta": state.get("entry_meta"),
+                "entry_order_ids": state.get("entry_order_ids"),
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+            },
+            output_payload={
+                "side": 4,
+                "size": size,
+                "dry_run": self.dry_run,
+                "success": success,
+                "order_id": exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+                "client_oid": exit_ref.get("client_oid") if isinstance(exit_ref, dict) else None,
+                "realized_pnl": realized_net,
+                "realized_pnl_gross": realized_gross,
+                "fees_estimated": fees_total,
+                "reconcile_mode": reconcile_mode,
+            },
+            order_id=exit_ref.get("order_id") if isinstance(exit_ref, dict) else None,
+        )
+        self._log_exit_attribution(symbol, reason, state, exit_ref)
+        return success
+
+    def is_blocked(self, symbol: str) -> bool:
+        state = self._get_state(symbol)
+        blocked = state["state"] in {
+            self.STATE_HEDGED,
+            self.STATE_RUNNER_LONG,
+            self.STATE_RUNNER_SHORT,
+            self.STATE_COOLDOWN,
+        }
+        if blocked:
+            logger.info(
+                "DIAG_STRADDLE_BLOCK symbol={} state={} cooldown_until={}",
+                symbol,
+                state.get("state"),
+                state.get("cooldown_until")
+            )
+        return blocked
+
+    def _extract_position_size(self, pos: Dict) -> float:
+        for key in ("size", "total", "position", "pos", "qty"):
+            if key in pos and pos[key] is not None:
+                try:
+                    return float(pos[key])
+                except (TypeError, ValueError):
+                    continue
+        return 0.0
+
+    def _extract_position_side(self, pos: Dict) -> str:
+        side_value = (
+            pos.get("hold_side")
+            or pos.get("holdSide")
+            or pos.get("positionSide")
+            or pos.get("posSide")
+            or pos.get("side")
+        )
+        if isinstance(side_value, str):
+            side_str = side_value.strip().lower()
+            if "long" in side_str or side_str == "buy":
+                return "LONG"
+            if "short" in side_str or side_str == "sell":
+                return "SHORT"
+        if side_value is not None:
+            try:
+                side_num = int(side_value)
+                return "LONG" if side_num == 1 else "SHORT"
+            except (TypeError, ValueError):
+                pass
+        return ""
+
+    def _extract_positions_payload(self, response: Dict) -> List[Dict]:
+        if isinstance(response, dict) and isinstance(response.get("position"), list):
+            data = response.get("position")
+        else:
+            data = response.get("data") if isinstance(response, dict) else response
+        if isinstance(data, dict):
+            for key in ("position", "positions", "data"):
+                if isinstance(data.get(key), list):
+                    data = data.get(key)
+                    break
+        if not data:
+            return []
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []
+
+    def _check_and_adopt_existing_positions(self, symbol: str, price: float):
+        if symbol not in self._reconcile_target_symbols:
+            return
+
+        state = self._get_state(symbol)
+        if state.get("reconcile_checked"):
+            return
+
+        current_state = state.get("state")
+        blocked = self.is_blocked(symbol)
+        if current_state not in {self.STATE_IDLE, self.STATE_DONE}:
+            logger.info(
+                "RECONCILE_SKIP symbol={} reason=state_active state={}",
+                symbol,
+                current_state,
+            )
+            state["reconcile_checked"] = True
+            return
+        if blocked:
+            logger.info(
+                "RECONCILE_SKIP symbol={} reason=blocked state={}",
+                symbol,
+                current_state,
+            )
+            state["reconcile_checked"] = True
+            return
+        if price <= 0:
+            logger.info(
+                "RECONCILE_SKIP symbol={} reason=invalid_price state={}",
+                symbol,
+                current_state,
+            )
+            return
+
+        try:
+            response = self.weex.get_position(symbol)
+        except Exception as exc:
+            logger.warning(
+                "RECONCILE_SKIP symbol={} reason=fetch_error err={}",
+                symbol,
+                exc,
+            )
+            state["reconcile_checked"] = True
+            return
+
+        positions = self._extract_positions_payload(response)
+        long_size = 0.0
+        short_size = 0.0
+        for pos in positions:
+            pos_symbol = pos.get("symbol") if isinstance(pos, dict) else None
+            if pos_symbol and pos_symbol != symbol:
+                continue
+            size = self._extract_position_size(pos)
+            if size == 0:
+                continue
+            side = self._extract_position_side(pos)
+            if not side and size < 0:
+                side = "SHORT"
+            if side == "LONG":
+                long_size += abs(size)
+            elif side == "SHORT":
+                short_size += abs(size)
+
+        logger.info(
+            "RECONCILE_CHECK symbol={} blocked={} long={} short={} state={}",
+            symbol,
+            blocked,
+            long_size,
+            short_size,
+            current_state,
+        )
+
+        tolerance = 0.001
+        if hasattr(self.weex, "_get_step_size"):
+            try:
+                step_size = float(self.weex._get_step_size(symbol))
+                if step_size > 0:
+                    tolerance = max(tolerance, step_size)
+            except (TypeError, ValueError):
+                pass
+
+        if long_size > 0 and short_size > 0 and abs(long_size - short_size) <= tolerance:
+            now = time.time()
+            state["state"] = self.STATE_HEDGED
+            state["entry_price"] = price
+            state["entry_time"] = now
+            state["size"] = min(long_size, short_size)
+            state["last_price"] = price
+            state["last_update_ts"] = now
+            state["long_size"] = long_size
+            state["short_size"] = short_size
+            state["reconcile_checked"] = True
+            logger.info(
+                "RECONCILE_ADOPT symbol={} state=HEDGED long={} short={}",
+                symbol,
+                long_size,
+                short_size,
+            )
+            return
+
+        reason = "missing_hedge"
+        if long_size > 0 and short_size > 0:
+            reason = "size_mismatch"
+        logger.info(
+            "RECONCILE_SKIP symbol={} reason={} long={} short={} tolerance={}",
+            symbol,
+            reason,
+            long_size,
+            short_size,
+            tolerance,
+        )
+        state["reconcile_checked"] = True
+
+    def active_symbols(self) -> set:
+        return {
+            symbol for symbol, state in self._states.items()
+            if state["state"] in {
+                self.STATE_HEDGED,
+                self.STATE_RUNNER_LONG,
+                self.STATE_RUNNER_SHORT,
+                self.STATE_COOLDOWN,
+            }
+        }
+
+    def set_daily_pnl(self, daily_pnl: float):
+        self.last_daily_pnl = daily_pnl
+        if daily_pnl >= 0.05 and self.position_size_multiplier != 1.0:
+            self.position_size_multiplier = 1.0
+            logger.info("🎯 DAILY TARGET HIT 5% → Resetting to base size")
+
+    def set_gamma_mode(self, enabled: bool, params: Dict | None = None):
+        if params:
+            self.gamma_params.update(params)
+        if enabled != self.gamma_mode:
+            self.gamma_mode = enabled
+            state = "ON" if enabled else "OFF"
+            logger.warning(f"⚠ VOLATILITY REGIME CHANGED: gamma_squeeze {state}")
+
+    def _extract_candle_arrays(self, candles: List) -> Tuple[List[float], List[float], List[float]]:
+        highs = []
+        lows = []
+        closes = []
+        for c in candles:
+            if isinstance(c, dict):
+                highs.append(float(c.get("high", 0)))
+                lows.append(float(c.get("low", 0)))
+                closes.append(float(c.get("close", 0)))
+            elif isinstance(c, list) and len(c) >= 5:
+                highs.append(float(c[2]))
+                lows.append(float(c[3]))
+                closes.append(float(c[4]))
+        return highs, lows, closes
+
+    def _atr_ratio(self, symbol: str, price: float) -> float:
+        try:
+            candles = self.weex.get_candles(symbol=symbol, interval="1m", limit=21)
+        except Exception as exc:
+            logger.warning(f"ATR fetch failed for {symbol}: {exc}")
+            return 1.0
+
+        if isinstance(candles, dict) and "data" in candles:
+            data = candles["data"]
+        else:
+            data = candles
+
+        if not isinstance(data, list) or len(data) < 20:
+            return 1.0
+
+        highs, lows, closes = self._extract_candle_arrays(data[-20:])
+        if len(highs) < 20 or len(lows) < 20 or len(closes) < 20:
+            return 1.0
+
+        prev_close = np.array(closes[:-1])
+        curr_high = np.array(highs[1:])
+        curr_low = np.array(lows[1:])
+        tr = np.maximum(
+            curr_high - curr_low,
+            np.maximum(np.abs(curr_high - prev_close), np.abs(curr_low - prev_close))
+        )
+        atr = float(np.mean(tr)) if len(tr) else 0.0
+        if price <= 0 or atr <= 0:
+            return 1.0
+
+        atr_pct = atr / price
+        if self.normal_atr_pct <= 0:
+            return 1.0
+        return atr_pct / self.normal_atr_pct
+
+    def get_atr_ratio(self, symbol: str, price: float) -> float:
+        """Public ATR ratio helper for logging/debugging."""
+        return self._atr_ratio(symbol, price)
+
+    def _scaled_thresholds(self, atr_ratio: float) -> Tuple[float, float, float, float, int, float]:
+        if self.gamma_mode:
+            breakout = self.gamma_params["breakout_threshold"]
+            initial_stop = self.gamma_params["initial_stop_loss"]
+            trail_activation = self.gamma_params["trail_activation"]
+            size_multiplier = self.gamma_params["position_size_multiplier"]
+            max_hold = self.gamma_params["time_stop_seconds"]
+            trail_pct = self.gamma_params["trail_distance"]
+            return breakout, initial_stop, trail_activation, size_multiplier, max_hold, trail_pct
+
+        if atr_ratio < 0.5:
+            scale = 0.4
+            size_multiplier = 1.8
+            trail_ratio = 0.3
+            max_hold = 30 * 60
+        elif atr_ratio < 0.8:
+            scale = 0.6
+            size_multiplier = 1.5
+            trail_ratio = 0.4
+            max_hold = 60 * 60
+        elif atr_ratio > 1.5:
+            scale = 1.3
+            size_multiplier = 0.8
+            trail_ratio = 0.8
+            max_hold = 3 * 60 * 60
+        elif atr_ratio > 1.2:
+            scale = 1.1
+            size_multiplier = 1.2
+            trail_ratio = 0.7
+            max_hold = int(2.5 * 60 * 60)
+        else:
+            scale = 1.0
+            size_multiplier = 1.0
+            trail_ratio = 0.6
+            max_hold = self.max_hold_seconds
+
+        breakout = self.breakout_pct * scale
+        initial_stop = self.initial_stop_loss_pct * scale
+        trail_activation = breakout * trail_ratio
+        trail_pct = self.trail_pct
+
+        breakout = max(0.007, min(0.025, breakout))
+        initial_stop = max(0.006, min(0.015, initial_stop))
+
+        return breakout, initial_stop, trail_activation, size_multiplier, max_hold, trail_pct
+
+    def _calculate_size(self, symbol: str, legacy_amount: float, price: float) -> Tuple[float, float, float, float, int, float]:
+        atr_ratio = self._atr_ratio(symbol, price)
+        breakout, initial_stop, trail_activation, size_multiplier, max_hold, trail_pct = self._scaled_thresholds(atr_ratio)
+
+        size_pct = self.straddle_risk * size_multiplier * self.position_size_multiplier
+        size_pct = min(size_pct, self.max_position_pct)
+        notional = legacy_amount * size_pct
+        return notional / price, atr_ratio, breakout, initial_stop, trail_activation, max_hold, trail_pct
+
+    def try_open(
+        self,
+        symbol: str,
+        price: float,
+        legacy_amount: float,
+        reason: Optional[str] = None,
+        entry_meta: Optional[Dict[str, Any]] = None,
+        entry_side: Optional[str] = None,
+    ) -> bool:
+        now = time.time()
+        state = self._get_state(symbol)
+        self._reset_if_ready(state, now)
+
+        if state["state"] != self.STATE_IDLE:
+            return False
+
+        if price <= 0 or legacy_amount <= 0:
+            return False
+
+        if self.position_ledger:
+            ledger_pos = self.position_ledger.get_position(symbol)
+            if ledger_pos.side != "FLAT":
+                # --- Start Guarded Adoption Patch ---
+                # Exit-only guarded adoption into existing per-symbol state machine.
+                # No new structures, no new entry orders.
+
+                side = getattr(ledger_pos, "side", None)
+                size = float(getattr(ledger_pos, "size", 0) or 0)
+                entry_time = float(getattr(ledger_pos, "open_time", 0) or 0)
+                entry_price = float(getattr(ledger_pos, "entry_price", 0) or 0)
+
+                age_sec = None
+                try:
+                    age_sec = int(time.time() - entry_time) if entry_time else None
+                except Exception:
+                    age_sec = None
+
+                adoption_window_sec = 72 * 60 * 60
+
+                if side not in ("LONG", "SHORT"):
+                    logger.warning(
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=unknown_side",
+                        symbol, side, size, age_sec
+                    )
+                    return False
+
+                if size <= 0:
+                    logger.warning(
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=zero_size",
+                        symbol, side, size, age_sec
+                    )
+                    return False
+
+                if age_sec is not None and age_sec > adoption_window_sec:
+                    logger.warning(
+                        "⚠ STRADDLE_SKIPPED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} reason=too_old",
+                        symbol, side, size, age_sec
+                    )
+                    return False
+
+                st = self._get_state(symbol)
+                if st.get("adopted_from_ledger"):
+                    logger.warning(
+                        "✅ STRADDLE_ALREADY_ADOPTED symbol={} side={} size={} age_sec={}",
+                        symbol, side, size, age_sec
+                    )
+                    return True
+
+                runner_state = "RUNNER_LONG" if side == "LONG" else "RUNNER_SHORT"
+
+                cur_price = entry_price
+                try:
+                    if hasattr(self, "_get_last_price"):
+                        cur_price = float(self._get_last_price(symbol) or entry_price)
+                    elif hasattr(self, "get_last_price"):
+                        cur_price = float(self.get_last_price(symbol) or entry_price)
+                    elif hasattr(self, "market_data") and hasattr(self.market_data, "get_last_price"):
+                        cur_price = float(self.market_data.get_last_price(symbol) or entry_price)
+                except Exception:
+                    cur_price = entry_price
+
+                now_ts = time.time()
+
+                st["state"] = runner_state
+                st["entry_price"] = entry_price
+                st["entry_time"] = entry_time or now_ts
+                st["size"] = size
+                st["runner_start_time"] = entry_time or now_ts
+                st["peak_price"] = cur_price
+                st["trough_price"] = cur_price
+                st["last_price"] = cur_price
+
+                if hasattr(self, "trail_activation_pct"):
+                    st["trail_activation_pct"] = getattr(self, "trail_activation_pct")
+                if hasattr(self, "trail_pct"):
+                    st["trail_pct"] = getattr(self, "trail_pct")
+                if hasattr(self, "max_hold_seconds"):
+                    st["max_hold_seconds"] = getattr(self, "max_hold_seconds")
+
+                st["last_update_ts"] = now_ts
+                st["reconcile_checked"] = True
+                st["adopted_from_ledger"] = True
+                ledger_entry_reason = self._normalize_entry_reason(getattr(ledger_pos, "entry_reason", None))
+                ledger_entry_regime_raw = getattr(ledger_pos, "entry_regime", None)
+                ledger_entry_regime = str(ledger_entry_regime_raw).strip().lower() if ledger_entry_regime_raw is not None else ""
+                if not ledger_entry_regime:
+                    ledger_entry_regime = "unknown"
+                st["entry_reason"] = ledger_entry_reason
+                st["entry_regime"] = ledger_entry_regime
+                entry_meta = st.get("entry_meta")
+                if not isinstance(entry_meta, dict):
+                    entry_meta = {}
+                entry_meta.setdefault("entry_reason", ledger_entry_reason)
+                entry_meta["regime"] = ledger_entry_regime
+                st["entry_meta"] = entry_meta
+                st["adopted_ts"] = now_ts
+
+                logger.warning(
+                    "✅ STRADDLE_ADOPTED_EXISTING_LEDGER_POSITION symbol={} side={} size={} age_sec={} entry_price={} runner_state={} entry_reason={} entry_regime={}",
+                    symbol, side, size, age_sec, entry_price, runner_state, ledger_entry_reason, ledger_entry_regime
+                )
+
+                return True
+                # --- End Guarded Adoption Patch ---
+
+        normalized_reason = self._normalize_entry_reason(reason or state.get("entry_reason") or "UNKNOWN")
+        normalized_side = str(entry_side or "BOTH").strip().upper()
+        if normalized_side not in {"LONG", "SHORT"}:
+            normalized_side = "BOTH"
+
+        jitter_ready, jitter_size_factor, jitter_eps_bps, jitter_eps = self._arm_or_release_finals_jitter(
+            symbol=symbol,
+            state=state,
+            entry_reason=normalized_reason,
+            entry_side=normalized_side,
+            now=now,
+        )
+        if not jitter_ready:
+            return False
+
+        if not isinstance(entry_meta, dict):
+            entry_meta = {}
+        entry_meta.setdefault("entry_reason", normalized_reason)
+        entry_meta.setdefault("entry_side", normalized_side)
+        if self.finals_jitter_enabled:
+            entry_meta["finals_jitter"] = {
+                "size_factor": jitter_size_factor,
+                "eps_bps": jitter_eps_bps,
+            }
+
+        size, atr_ratio, breakout, initial_stop, trail_activation, max_hold, trail_pct = self._calculate_size(
+            symbol,
+            legacy_amount,
+            price
+        )
+        size *= max(0.01, float(jitter_size_factor or 1.0))
+        breakout = max(0.007, min(0.03, breakout + max(0.0, float(jitter_eps or 0.0))))
+        if size <= 0:
+            return False
+        estimated_usage = size * price * 2.0
+        if estimated_usage > (legacy_amount * self.max_margin_usage_pct):
+            logger.warning("⚠ STRADDLE ABORTED (INSUFFICIENT MARGIN)")
+            return False
+
+        long_result = self._place_order(symbol, side=1, size=size)
+        short_result = self._place_order(symbol, side=2, size=size)
+
+        long_ok = self._order_success(long_result)
+        short_ok = self._order_success(short_result)
+
+        entry_order_ids = []
+        long_ref = self._extract_order_refs(long_result)
+        short_ref = self._extract_order_refs(short_result)
+        if long_ref:
+            entry_order_ids.append(long_ref)
+        if short_ref:
+            entry_order_ids.append(short_ref)
+
+        if self._is_40015(long_result) or self._is_40015(short_result):
+            if long_ok:
+                self._close_long(symbol, size, state, reason="OPEN_CLEANUP_40015")
+            if short_ok:
+                self._close_short(symbol, size, state, reason="OPEN_CLEANUP_40015")
+            self._enter_cooldown(state, "40015")
+            return False
+
+        if not long_ok or not short_ok:
+            if long_ok:
+                self._close_long(symbol, size, state, reason="OPEN_CLEANUP_PARTIAL")
+            if short_ok:
+                self._close_short(symbol, size, state, reason="OPEN_CLEANUP_PARTIAL")
+            logger.warning("⚠ STRADDLE OPEN FAILED (partial fill cleaned up)")
+            return False
+
+        state["state"] = self.STATE_HEDGED
+        state["entry_price"] = price
+        state["entry_time"] = now
+        state["symbol"] = symbol
+        state["entry_reason"] = normalized_reason
+        if entry_meta:
+            state["entry_meta"] = entry_meta
+            state["entry_regime"] = entry_meta.get("regime")
+        else:
+            state["entry_meta"] = {}
+            state["entry_regime"] = "unknown"
+        if entry_order_ids:
+            state["entry_order_ids"] = entry_order_ids
+        else:
+            state["entry_order_ids"] = []
+        state["exit_order_ids"] = []
+        state["size"] = size
+        state["breakout_pct"] = breakout
+        state["initial_stop_loss_pct"] = initial_stop
+        state["trail_activation_pct"] = trail_activation
+        state["trail_pct"] = trail_pct
+        state["max_hold_seconds"] = max_hold
+        probe_mode = bool(entry_meta.get("probe_mode")) if isinstance(entry_meta, dict) else False
+        if state["entry_reason"] == "LOW_VOL_EXTREME_OVERRIDE" and probe_mode:
+            state["max_hold_seconds"] = min(state["max_hold_seconds"], self.probe_time_stop_seconds)
+            logger.info(
+                "PROBE_TIME_STOP_ACTIVE symbol={} entry_reason={} max_hold_seconds={} probe_size_multiplier={}",
+                symbol,
+                state["entry_reason"],
+                state["max_hold_seconds"],
+                entry_meta.get("probe_size_multiplier") if isinstance(entry_meta, dict) else None,
+            )
+        state["atr_ratio"] = atr_ratio
+        state["realized_pnl"] = 0.0
+        state["realized_pnl_net"] = 0.0
+        state["fees_estimated_total"] = 0.0
+        state["pnl_applied"] = False
+        state["closed_trade_recorded"] = False
+        state["last_exit_reason"] = "unknown"
+        state["runner_side"] = "LONG"
+        state["peak_price"] = price
+        state["trough_price"] = price
+        state["runner_start_time"] = 0.0
+        state["last_price"] = price
+        logger.info(
+            f"🟡 STRADDLE OPENED size={size:.6f} atr_ratio={atr_ratio:.2f} "
+            f"breakout={breakout*100:.2f}% initial_stop={initial_stop*100:.2f}% "
+            f"trail_activation={trail_activation*100:.2f}% trail_distance={trail_pct*100:.2f}% "
+            f"max_hold={max_hold}s gamma_mode={self.gamma_mode}"
+        )
+        if entry_meta:
+            safe_meta = self._sanitize_payload(entry_meta)
+            try:
+                import json
+                meta_json = json.dumps(safe_meta, separators=(",", ":"), ensure_ascii=True)
+            except Exception:
+                meta_json = str(safe_meta)
+            logger.info("DIAG_ENTRY_META symbol={} entry_reason={} payload={}", symbol, state.get("entry_reason"), meta_json)
+        return True
+
+    def update(self, symbol: str, price: float):
+        now = time.time()
+        if os.path.exists(self._clear_flag_path):
+            try:
+                os.remove(self._clear_flag_path)
+            except OSError:
+                pass
+            self._states = {}
+            logger.warning("⚠ STRADDLE_STATE_CLEARED reason=flag")
+        state = self._get_state(symbol)
+        self._reset_if_ready(state, now)
+        if state.get("state") == self.STATE_IDLE:
+            stale_after_ts = float(state.get("finals_jitter_stale_after_ts") or 0.0)
+            if stale_after_ts > 0.0 and now >= stale_after_ts:
+                logger.info(
+                    "FINALS_JITTER_CANCEL symbol={} reason=stale_signal_wait timeout_s={}",
+                    symbol,
+                    int(self.finals_jitter_stale_seconds),
+                )
+                self._clear_finals_jitter(state)
+        self._maybe_adopt_from_ledger(symbol, price)
+        if not self._exit_ai_log_wired_emitted:
+            logger.info(
+                "AI_EXIT_LOG_WIRED symbol={} ai_log_bus={}",
+                symbol,
+                bool(self.ai_log_bus)
+            )
+            self._emit_exit_ai_log(
+                stage="WIRED_HEARTBEAT",
+                symbol=symbol,
+                reason="AI_EXIT_LOG_WIRED",
+                input_payload={"symbol": symbol, "state": state.get("state")},
+                output_payload={"ai_log_bus": bool(self.ai_log_bus)},
+            )
+            self._exit_ai_log_wired_emitted = True
+        self._check_and_adopt_existing_positions(symbol, price)
+
+        if self._maybe_cleanup_stale_adopted_runner(symbol, state, now):
+            return
+
+        if price <= 0:
+            return
+
+        if (now - state["last_update_ts"]) < self.min_update_interval:
+            return
+
+        state["last_update_ts"] = now
+        state["last_price"] = price
+
+        current_state = state["state"]
+        if current_state not in {self.STATE_IDLE, self.STATE_DONE, self.STATE_COOLDOWN}:
+            logger.info("DIAG_STRADDLE_STATE symbol={} state={} entry_time={} cooldown_until={}",
+                        symbol, current_state, state.get("entry_time"), state.get("cooldown_until"))
+        if current_state in {self.STATE_IDLE, self.STATE_DONE}:
+            return
+        if current_state == self.STATE_COOLDOWN:
+            return
+
+        if current_state == self.STATE_HEDGED:
+            elapsed = now - float(state.get("entry_time") or now)
+            symbol_norm = str(symbol or "").strip().lower()
+            if (
+                self.force_hedged_exit_seconds > 0
+                and symbol_norm in self.force_hedged_exit_symbols
+                and elapsed >= float(self.force_hedged_exit_seconds)
+            ):
+                logger.warning(
+                    "FORCE_HEDGED_EXIT symbol={} elapsed_s={} size={} reason={}",
+                    symbol,
+                    int(elapsed),
+                    float(state.get("size") or 0.0),
+                    self.force_hedged_exit_reason,
+                )
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason=self.force_hedged_exit_reason,
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_time": state.get("entry_time"),
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                            "elapsed_s": int(elapsed),
+                        },
+                        output_payload={"action": "close_hedge_force_unblock"},
+                    )
+                    self._close_long(symbol, state["size"], state, reason=self.force_hedged_exit_reason)
+                    self._close_short(symbol, state["size"], state, reason=self.force_hedged_exit_reason)
+                    self._mark_action(state, now)
+                    state["state"] = self.STATE_DONE
+                    self._maybe_apply_compound(state)
+                return
+            # STALL_EXIT_LOW_VOL_ATR_SHORT: early exit on no follow-through
+            entry_reason = state.get("entry_reason")
+            if entry_reason == "LOW_VOL_SHORT_GATE_X3_WITH_ATR":
+                entry_time = state.get("entry_time", now)
+                entry_price = state.get("entry_price")
+                if entry_price:
+                    age_s = now - entry_time
+                    if age_s >= 180:
+                        move_pct = abs(price - entry_price) / entry_price * 100.0
+                        if move_pct < 0.03:
+                            logger.info(
+                                "STALL_EXIT_LOW_VOL_ATR_SHORT symbol={} age_s={} move_pct={:.3f} entry_price={} last_price={}",
+                                symbol, int(age_s), move_pct, entry_price, price
+                            )
+                            if self._can_act(state, now):
+                                self._emit_exit_ai_log(
+                                    stage="Exit Decision",
+                                    symbol=symbol,
+                                    reason="STALL_EXIT_LOW_VOL_ATR_SHORT",
+                                    input_payload={
+                                        "symbol": symbol,
+                                        "state": current_state,
+                                        "entry_reason": entry_reason,
+                                        "entry_time": entry_time,
+                                        "entry_price": entry_price,
+                                        "last_price": price,
+                                        "size": state.get("size"),
+                                    },
+                                    output_payload={"action": "close_hedge"},
+                                )
+                                self._close_long(symbol, state["size"], state, reason="STALL_EXIT_LOW_VOL_ATR_SHORT")
+                                self._close_short(symbol, state["size"], state, reason="STALL_EXIT_LOW_VOL_ATR_SHORT")
+                                self._mark_action(state, now)
+                                state["state"] = self.STATE_DONE
+                                self._maybe_apply_compound(state)
+                            return
+            max_hold_seconds = state["max_hold_seconds"]
+            entry_reason = state.get("entry_reason") or "UNKNOWN"
+            if entry_reason == "LOW_VOL_SHORT_GATE_X3_WITH_ATR":
+                max_hold_seconds = 6 * 60 * 60
+                logger.info(
+                    "HOLD_EXTENSION_ACTIVE symbol={} entry_reason={} max_hold_seconds={}",
+                    symbol, entry_reason, max_hold_seconds
+                )
+            probe_mode = bool(state.get("entry_meta", {}).get("probe_mode")) if isinstance(state.get("entry_meta"), dict) else False
+            if entry_reason == "LOW_VOL_EXTREME_OVERRIDE" and probe_mode:
+                max_hold_seconds = min(max_hold_seconds, self.probe_time_stop_seconds)
+                if not state.get("probe_time_stop_logged"):
+                    logger.info(
+                        "PROBE_TIME_STOP_ACTIVE symbol={} entry_reason={} max_hold_seconds={} PROBE_SIZE_MULTIPLIER={}",
+                        symbol,
+                        entry_reason,
+                        max_hold_seconds,
+                        state.get("entry_meta", {}).get("probe_size_multiplier") if isinstance(state.get("entry_meta"), dict) else None,
+                    )
+                    state["probe_time_stop_logged"] = True
+            elapsed = now - state["entry_time"]
+            if elapsed >= max_hold_seconds:
+                entry_reason = state.get("entry_reason")
+                entry_time = state.get("entry_time", now)
+                entry_price = state.get("entry_price") or 0.0
+                age_s = now - entry_time if entry_time is not None else 0
+                move_pct = 0.0
+                if entry_price:
+                    move_pct = abs(price - entry_price) / entry_price * 100.0
+                logger.info("TIME_STOP symbol={} state={} entry_reason={} age_s={} move_pct={:.3f} entry_price={:.6f} last_price={:.6f}", symbol, current_state, entry_reason, int(age_s), move_pct, float(entry_price or 0.0), float(price or 0.0))
+                logger.info("⏱ TIME STOP EXIT (no breakout)")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="TIME_STOP",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_time": state.get("entry_time"),
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_hedge"},
+                    )
+                    state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+                    state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+                    self._close_long(symbol, state["size"], state, reason="TIME_STOP")
+                    self._close_short(symbol, state["size"], state, reason="TIME_STOP")
+                    self._mark_action(state, now)
+                    state["state"] = self.STATE_DONE
+                    self._maybe_apply_compound(state)
+                return
+
+            base_stop_pct = float(state.get("initial_stop_loss_pct") or self.initial_stop_loss_pct)
+            effective_stop_pct = base_stop_pct
+            atr_ratio_live = None
+            try:
+                atr_ratio_live = float(self._atr_ratio(symbol, price))
+            except Exception as exc:
+                logger.warning("VOL_ADJUSTED_STOP_ATR_FETCH_FAILED symbol={} error={}", symbol, exc)
+
+            if atr_ratio_live is not None:
+                # Widen in low vol (avoid noise stops), tighten in high vol (risk containment).
+                if atr_ratio_live < 0.7:
+                    effective_stop_pct = base_stop_pct * 1.5
+                elif atr_ratio_live > 1.3:
+                    effective_stop_pct = base_stop_pct * 0.85
+
+            effective_stop_pct = max(0.006, min(0.02, effective_stop_pct))
+            state["effective_stop_loss_pct"] = effective_stop_pct
+            state["atr_ratio_live"] = atr_ratio_live
+            if (now - float(state.get("last_stop_log_ts", 0.0) or 0.0)) >= 60.0:
+                logger.info(
+                    "VOL_ADJUSTED_STOP symbol={} base_stop_pct={:.4f} effective_stop_pct={:.4f} atr_ratio={}",
+                    symbol,
+                    base_stop_pct,
+                    effective_stop_pct,
+                    f"{atr_ratio_live:.3f}" if atr_ratio_live is not None else "NA"
+                )
+                state["last_stop_log_ts"] = now
+
+            if price >= state["entry_price"] * (1 + effective_stop_pct):
+                entry_reason = state.get("entry_reason")
+                entry_time = state.get("entry_time")
+                entry_price = state.get("entry_price")
+                age_s = now - entry_time if entry_time else None
+                move_pct = (abs(price - entry_price) / entry_price * 100.0) if entry_price else None
+                logger.info("EXIT_OBSERVABILITY symbol={} exit_path={} entry_reason={} age_s={} move_pct={:.4f}",
+                            symbol, "STOP_LOSS", entry_reason,
+                            int(age_s) if age_s is not None else None,
+                            move_pct if move_pct is not None else -1.0)
+                logger.info("🧯 INITIAL STOP LOSS → closing SHORT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="INITIAL_STOP_LOSS_CLOSE_SHORT",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                            "base_stop_loss_pct": base_stop_pct,
+                            "effective_stop_loss_pct": effective_stop_pct,
+                            "atr_ratio_live": atr_ratio_live,
+                        },
+                        output_payload={"action": "close_short"},
+                    )
+                    state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+                    if self._close_short(symbol, state["size"], state, reason="INITIAL_STOP_LOSS"):
+                        state["state"] = self.STATE_RUNNER_LONG
+                        state["runner_side"] = "LONG"
+                        state["runner_start_time"] = now
+                        state["peak_price"] = price
+                        logger.info("🏃 RUNNER ACTIVE (LONG)")
+                    self._mark_action(state, now)
+                return
+
+            if price <= state["entry_price"] * (1 - effective_stop_pct):
+                entry_reason = state.get("entry_reason")
+                entry_time = state.get("entry_time")
+                entry_price = state.get("entry_price")
+                age_s = now - entry_time if entry_time else None
+                move_pct = (abs(price - entry_price) / entry_price * 100.0) if entry_price else None
+                logger.info("EXIT_OBSERVABILITY symbol={} exit_path={} entry_reason={} age_s={} move_pct={:.4f}",
+                            symbol, "STOP_LOSS", entry_reason,
+                            int(age_s) if age_s is not None else None,
+                            move_pct if move_pct is not None else -1.0)
+                logger.info("🧯 INITIAL STOP LOSS → closing LONG")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="INITIAL_STOP_LOSS_CLOSE_LONG",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                            "base_stop_loss_pct": base_stop_pct,
+                            "effective_stop_loss_pct": effective_stop_pct,
+                            "atr_ratio_live": atr_ratio_live,
+                        },
+                        output_payload={"action": "close_long"},
+                    )
+                    state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+                    if self._close_long(symbol, state["size"], state, reason="INITIAL_STOP_LOSS"):
+                        state["state"] = self.STATE_RUNNER_SHORT
+                        state["runner_side"] = "SHORT"
+                        state["runner_start_time"] = now
+                        state["trough_price"] = price
+                        logger.info("🏃 RUNNER ACTIVE (SHORT)")
+                    self._mark_action(state, now)
+                return
+
+            if price >= state["entry_price"] * (1 + state["breakout_pct"]):
+                logger.info("🚀 BREAKOUT UP → closing SHORT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="BREAKOUT_UP_CLOSE_SHORT",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_short"},
+                    )
+                    state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+                    if self._close_short(symbol, state["size"], state, reason="BREAKOUT_UP"):
+                        state["state"] = self.STATE_RUNNER_LONG
+                        state["runner_side"] = "LONG"
+                        state["runner_start_time"] = now
+                        state["peak_price"] = price
+                        logger.info("🏃 RUNNER ACTIVE (LONG)")
+                    self._mark_action(state, now)
+                return
+
+            if price <= state["entry_price"] * (1 - state["breakout_pct"]):
+                logger.info("📉 BREAKOUT DOWN → closing LONG")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="BREAKOUT_DOWN_CLOSE_LONG",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_long"},
+                    )
+                    state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+                    if self._close_long(symbol, state["size"], state, reason="BREAKOUT_DOWN"):
+                        state["state"] = self.STATE_RUNNER_SHORT
+                        state["runner_side"] = "SHORT"
+                        state["runner_start_time"] = now
+                        state["trough_price"] = price
+                        logger.info("🏃 RUNNER ACTIVE (SHORT)")
+                    self._mark_action(state, now)
+                return
+
+        if current_state == self.STATE_RUNNER_LONG:
+            state["peak_price"] = max(state["peak_price"], price)
+            trail_armed = price >= state["entry_price"] * (1 + state["trail_activation_pct"])
+
+            if now - state["runner_start_time"] >= state["max_hold_seconds"]:
+                logger.info("⏱ TIME STOP EXIT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="RUNNER_LONG_TIME_STOP",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_long"},
+                    )
+                    state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+                    if self._close_long(symbol, state["size"], state, reason="RUNNER_LONG_TIME_STOP"):
+                        state["state"] = self.STATE_DONE
+                        self._maybe_apply_compound(state)
+                    self._mark_action(state, now)
+                return
+
+            if trail_armed and price <= state["peak_price"] * (1 - state["trail_pct"]):
+                logger.info("🛑 TRAILING STOP HIT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="RUNNER_LONG_TRAIL_STOP",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_long"},
+                    )
+                    state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+                    if self._close_long(symbol, state["size"], state, reason="RUNNER_LONG_TRAIL_STOP"):
+                        state["state"] = self.STATE_DONE
+                        self._maybe_apply_compound(state)
+                    self._mark_action(state, now)
+                return
+
+        if current_state == self.STATE_RUNNER_SHORT:
+            state["trough_price"] = min(state["trough_price"], price)
+            trail_armed = price <= state["entry_price"] * (1 - state["trail_activation_pct"])
+
+            if now - state["runner_start_time"] >= state["max_hold_seconds"]:
+                logger.info("⏱ TIME STOP EXIT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="RUNNER_SHORT_TIME_STOP",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_short"},
+                    )
+                    state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+                    if self._close_short(symbol, state["size"], state, reason="RUNNER_SHORT_TIME_STOP"):
+                        state["state"] = self.STATE_DONE
+                        self._maybe_apply_compound(state)
+                    self._mark_action(state, now)
+                return
+
+            if trail_armed and price >= state["trough_price"] * (1 + state["trail_pct"]):
+                logger.info("🛑 TRAILING STOP HIT")
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason="RUNNER_SHORT_TRAIL_STOP",
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                        },
+                        output_payload={"action": "close_short"},
+                    )
+                    state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+                    if self._close_short(symbol, state["size"], state, reason="RUNNER_SHORT_TRAIL_STOP"):
+                        state["state"] = self.STATE_DONE
+                        self._maybe_apply_compound(state)
+                    self._mark_action(state, now)
+                return
+
+    def force_close(self, symbol: str):
+        state = self._get_state(symbol)
+        if state["state"] in {self.STATE_IDLE, self.STATE_DONE}:
+            return
+
+        logger.warning("🛑 STRADDLE FORCE CLOSE")
+        self._emit_exit_ai_log(
+            stage="Exit Decision",
+            symbol=symbol,
+            reason="FORCE_CLOSE",
+            input_payload={
+                "symbol": symbol,
+                "state": state.get("state"),
+                "entry_price": state.get("entry_price"),
+                "last_price": state.get("last_price"),
+                "size": state.get("size"),
+            },
+            output_payload={"action": "close_force"},
+        )
+        price = state["last_price"]
+        if price > 0:
+            state["realized_pnl"] += (price - state["entry_price"]) * state["size"]
+            state["realized_pnl"] += (state["entry_price"] - price) * state["size"]
+        self._close_long(symbol, state["size"], state, reason="FORCE_CLOSE")
+        self._close_short(symbol, state["size"], state, reason="FORCE_CLOSE")
+        state["state"] = self.STATE_DONE
+        self._maybe_apply_compound(state)
+
+    def _maybe_apply_compound(self, state: Dict):
+        if state.get("pnl_applied"):
+            return
+        self._record_closed_trade_for_ledger(state)
+        _, _, net_pnl = self._refresh_realized_pnl_snapshot(state)
+        pnl = net_pnl
+        if pnl > 0:
+            self.position_size_multiplier *= 1.02
+            logger.info(f"📈 WIN: PnL {pnl:.2f} → size multiplier: {self.position_size_multiplier:.3f}")
+        elif pnl < 0:
+            self.position_size_multiplier *= 0.995
+            logger.info(f"📉 LOSS: PnL {pnl:.2f} → size multiplier: {self.position_size_multiplier:.3f}")
+        state["pnl_applied"] = True

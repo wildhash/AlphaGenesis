@@ -1,0 +1,42 @@
+{
+  "total_feedback": 3,
+  "adaptations": [],
+  "strategy_performance": {
+    "grow_capital_market_maker": {
+      "total_actions": 3,
+      "successful_actions": 3,
+      "success_rate": 1.0,
+      "total_pnl": 0.0,
+      "avg_fitness": 0.54878
+    }
+  },
+  "recent_feedback": [
+    {
+      "action_id": "action_2_cmt_dogeusdt",
+      "intent_id": "grow_capital",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-09T02:48:26.744799",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_bnbusdt",
+      "intent_id": "grow_capital",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-09T02:48:35.245694",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    },
+    {
+      "action_id": "action_2_cmt_ltcusdt",
+      "intent_id": "grow_capital",
+      "model_type": "market_maker",
+      "timestamp": "2026-02-09T02:48:39.826391",
+      "success": true,
+      "pnl": 0.0,
+      "fitness_score": 0.68
+    }
+  ]
+}
