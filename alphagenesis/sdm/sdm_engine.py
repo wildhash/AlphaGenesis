@@ -21,6 +21,7 @@ import json
 import sqlite3
 import random
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional, Callable
 from collections import defaultdict
@@ -74,6 +75,16 @@ class LoserTupleKillSwitch:
         self.refresh_interval_seconds = max(30, int(refresh_interval_seconds))
         self.last_refresh_ts = 0.0
         self.blocked_tuples: Dict[str, Dict[str, Any]] = {}
+        self.exclude_operational_exits = os.getenv("KILL_SWITCH_EXCLUDE_OPERATIONAL_EXITS", "true").lower() == "true"
+        operational_csv = os.getenv(
+            "OPERATIONAL_EXIT_REASONS",
+            "STALE_ADOPTED_RUNNER_TIMEOUT,DESYNC_FORCE_FLATTEN,exchange_flat_detected",
+        )
+        self.operational_exit_reasons = {
+            str(v).strip().lower()
+            for v in str(operational_csv or "").split(",")
+            if str(v).strip()
+        }
         self._load_state()
 
     def _normalize_reason(self, value: Any) -> str:
@@ -93,6 +104,12 @@ class LoserTupleKillSwitch:
         reason_norm = self._normalize_reason(entry_reason)
         regime_norm = self._normalize_regime(regime)
         return f"{symbol_norm}|{reason_norm}|{regime_norm}"
+
+    def _is_operational_exit(self, exit_reason: Any) -> bool:
+        if not self.exclude_operational_exits:
+            return False
+        reason = str(exit_reason or "").strip().lower()
+        return bool(reason) and reason in self.operational_exit_reasons
 
     def _load_state(self) -> None:
         try:
@@ -187,6 +204,13 @@ class LoserTupleKillSwitch:
                 continue
 
             close_reason = str(self._obj_get(trade, "close_reason") or "").strip().lower()
+            if self._is_operational_exit(close_reason):
+                logger.info(
+                    "SKIP_STATS_OPERATIONAL_EXIT source=loser_kill_switch_ledger exit_reason={} symbol={}",
+                    close_reason,
+                    self._obj_get(trade, "symbol"),
+                )
+                continue
             if close_reason == "exchange_flat_detected":
                 skipped_flat_reason += 1
                 continue
@@ -257,6 +281,13 @@ class LoserTupleKillSwitch:
                 or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
             )
             exit_reason = str(inp.get("exit_reason") or out.get("exit_reason") or "").strip().lower()
+            if self._is_operational_exit(exit_reason):
+                logger.info(
+                    "SKIP_STATS_OPERATIONAL_EXIT source=loser_kill_switch_ai exit_reason={} symbol={}",
+                    exit_reason,
+                    symbol,
+                )
+                continue
             if exit_reason == "exchange_flat_detected":
                 skipped_flat_reason += 1
                 continue
@@ -425,6 +456,9 @@ class ReasonRegimeQuarantine:
         quarantine_seconds: int = 5400,
         refresh_interval_seconds: int = 120,
         allow_keys_csv: str = "",
+        canonicalize_keys: bool = True,
+        match_mode: str = "exact",
+        exclude_operational_exits: bool = True,
     ):
         self.state_path = state_path
         self.db_path = db_path
@@ -434,10 +468,27 @@ class ReasonRegimeQuarantine:
         self.quarantine_seconds = max(60, int(quarantine_seconds))
         self.refresh_interval_seconds = max(30, int(refresh_interval_seconds))
         self.last_refresh_ts = 0.0
-        self.allow_reason_keys = {
-            str(k).strip().lower()
+        self.canonicalize_keys = bool(canonicalize_keys)
+        mode = str(match_mode or "exact").strip().lower()
+        self.match_mode = mode if mode in {"exact", "prefix", "contains"} else "exact"
+        self.exclude_operational_exits = bool(exclude_operational_exits)
+        operational_csv = os.getenv(
+            "OPERATIONAL_EXIT_REASONS",
+            "STALE_ADOPTED_RUNNER_TIMEOUT,DESYNC_FORCE_FLATTEN,exchange_flat_detected",
+        )
+        self.operational_exit_reasons = {
+            str(v).strip().lower()
+            for v in str(operational_csv or "").split(",")
+            if str(v).strip()
+        }
+        raw_keys = [
+            str(k).strip()
             for k in str(allow_keys_csv or "").split(",")
             if str(k).strip()
+        ]
+        self.allow_reason_keys = {
+            self._canonicalize_key(k.lower()) if self.canonicalize_keys else k.lower()
+            for k in raw_keys
         }
         self.active_keys: Dict[str, Dict[str, Any]] = {}
         self._load_state()
@@ -454,16 +505,66 @@ class ReasonRegimeQuarantine:
         regime = str(value).strip().lower()
         return regime if regime else "unknown"
 
+    def _canonicalize_component(self, value: Any) -> str:
+        text = str(value or "").strip().lower()
+        if not text:
+            return ""
+        text = text.replace(",", " ").replace(";", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    def _canonicalize_key(self, key: str) -> str:
+        parts = str(key or "").split("|", 1)
+        if len(parts) == 2:
+            reason_text = self._canonicalize_component(parts[0])
+            regime_text = self._canonicalize_component(parts[1])
+            return f"{reason_text}|{regime_text}"
+        return self._canonicalize_component(key)
+
     def _reason_key(self, entry_reason: Any, regime: Any) -> str:
-        return f"{self._normalize_reason(entry_reason)}|{self._normalize_regime(regime)}"
+        reason = self._normalize_reason(entry_reason)
+        regime_norm = self._normalize_regime(regime)
+        key = f"{reason}|{regime_norm}"
+        if self.canonicalize_keys:
+            return self._canonicalize_key(key)
+        return key
 
     def _reason_key_lower(self, entry_reason: Any, regime: Any) -> str:
         return self._reason_key(entry_reason, regime).lower()
 
-    def _is_tracked_key(self, key_lower: str) -> bool:
+    def _resolve_allow_key(self, key_lower: str) -> Optional[str]:
         if not self.allow_reason_keys:
-            return True
-        return key_lower in self.allow_reason_keys
+            return key_lower
+        if self.match_mode == "exact":
+            return key_lower if key_lower in self.allow_reason_keys else None
+        for allow_key in sorted(self.allow_reason_keys, key=len, reverse=True):
+            matched = False
+            if self.match_mode == "prefix":
+                matched = key_lower.startswith(allow_key)
+            elif self.match_mode == "contains":
+                matched = allow_key in key_lower
+            if matched:
+                if allow_key != key_lower:
+                    logger.info(
+                        "REASON_QUARANTINE_MATCH mode={} key={} candidate={}",
+                        self.match_mode,
+                        allow_key,
+                        key_lower,
+                    )
+                return allow_key
+        return None
+
+    def _is_tracked_key(self, key_lower: str) -> bool:
+        return self._resolve_allow_key(key_lower) is not None
+
+    def _tracked_key(self, key_lower: str) -> Optional[str]:
+        return self._resolve_allow_key(key_lower)
+
+    def _is_operational_exit(self, exit_reason: Any) -> bool:
+        if not self.exclude_operational_exits:
+            return False
+        reason = str(exit_reason or "").strip().lower()
+        return bool(reason) and reason in self.operational_exit_reasons
 
     def _obj_get(self, obj: Any, key: str, default: Any = None) -> Any:
         if isinstance(obj, dict):
@@ -479,7 +580,14 @@ class ReasonRegimeQuarantine:
             if isinstance(data, dict):
                 active = data.get("active_keys")
                 if isinstance(active, dict):
-                    self.active_keys = active
+                    normalized_active: Dict[str, Dict[str, Any]] = {}
+                    for key, meta in active.items():
+                        key_text = str(key or "").strip().lower()
+                        if self.canonicalize_keys:
+                            key_text = self._canonicalize_key(key_text)
+                        if key_text:
+                            normalized_active[key_text] = meta if isinstance(meta, dict) else {}
+                    self.active_keys = normalized_active
         except Exception as exc:
             logger.warning("REASON_QUARANTINE_STATE_LOAD_FAILED path={} err={}", self.state_path, exc)
 
@@ -501,7 +609,9 @@ class ReasonRegimeQuarantine:
         return sum(1 for meta in self.active_keys.values() if int(meta.get("quarantine_until_ms", 0) or 0) > now_ms)
 
     def is_quarantined(self, entry_reason: Any, regime: Any) -> bool:
-        key_lower = self._reason_key_lower(entry_reason, regime)
+        key_lower = self._tracked_key(self._reason_key_lower(entry_reason, regime))
+        if key_lower is None:
+            return False
         meta = self.active_keys.get(key_lower)
         if not meta:
             return False
@@ -514,7 +624,10 @@ class ReasonRegimeQuarantine:
         return True
 
     def get_meta(self, entry_reason: Any, regime: Any) -> Dict[str, Any]:
-        return self.active_keys.get(self._reason_key_lower(entry_reason, regime), {})
+        key_lower = self._tracked_key(self._reason_key_lower(entry_reason, regime))
+        if key_lower is None:
+            return {}
+        return self.active_keys.get(key_lower, {})
 
     def _new_stats_map(self) -> Dict[str, Dict[str, Any]]:
         return defaultdict(
@@ -554,14 +667,22 @@ class ReasonRegimeQuarantine:
                 continue
 
             close_reason = str(self._obj_get(trade, "close_reason") or "").strip().lower()
+            if self._is_operational_exit(close_reason):
+                logger.info(
+                    "SKIP_STATS_OPERATIONAL_EXIT source=reason_quarantine_ledger exit_reason={} entry_reason={} entry_regime={}",
+                    close_reason,
+                    self._obj_get(trade, "entry_reason"),
+                    self._obj_get(trade, "entry_regime"),
+                )
+                continue
             if close_reason == "exchange_flat_detected":
                 continue
 
             entry_reason = self._obj_get(trade, "entry_reason")
             entry_regime = self._obj_get(trade, "entry_regime")
-            key = self._reason_key(entry_reason, entry_regime)
-            key_lower = key.lower()
-            if not self._is_tracked_key(key_lower):
+            key_lower_candidate = self._reason_key(entry_reason, entry_regime).lower()
+            key_lower = self._tracked_key(key_lower_candidate)
+            if key_lower is None:
                 continue
 
             entry_reason_norm = self._normalize_reason(entry_reason).lower()
@@ -628,11 +749,20 @@ class ReasonRegimeQuarantine:
                 or out.get("regime")
                 or (inp.get("entry_meta", {}).get("regime") if isinstance(inp.get("entry_meta"), dict) else None)
             )
-            key_lower = self._reason_key_lower(entry_reason, entry_regime)
-            if not self._is_tracked_key(key_lower):
+            key_lower_candidate = self._reason_key_lower(entry_reason, entry_regime)
+            key_lower = self._tracked_key(key_lower_candidate)
+            if key_lower is None:
                 continue
 
             exit_reason = str(inp.get("exit_reason") or out.get("exit_reason") or "").strip().lower()
+            if self._is_operational_exit(exit_reason):
+                logger.info(
+                    "SKIP_STATS_OPERATIONAL_EXIT source=reason_quarantine_ai exit_reason={} entry_reason={} entry_regime={}",
+                    exit_reason,
+                    entry_reason,
+                    entry_regime,
+                )
+                continue
             if exit_reason == "exchange_flat_detected":
                 continue
             reason_norm = self._normalize_reason(entry_reason).lower()
@@ -979,7 +1109,13 @@ class SDMTradingEngine:
             ai_log_bus=self.ai_log_bus
         )
         self.straddle_confidence_threshold = 0.55
+        self.champion_direct_execution_enabled = os.getenv("CHAMPION_DIRECT_EXECUTION_ENABLED", "false").lower() == "true"
+        self.sol_long_direct_execution_enabled = os.getenv("SOL_LONG_DIRECT_EXECUTION_ENABLED", "false").lower() == "true"
+        self.sol_long_intent_allow = os.getenv("SOL_LONG_INTENT_ALLOW", "false").lower() == "true"
+        self.sol_straddle_bypass_enabled = os.getenv("SOL_STRADDLE_BYPASS_ENABLED", "false").lower() == "true"
         self._straddle_tick_seen = set()
+        if self.sol_straddle_bypass_enabled:
+            logger.warning("SOL_STRADDLE_BYPASS_ENABLED=true")
 
         # State
         self.is_running = False
@@ -1024,9 +1160,32 @@ class SDMTradingEngine:
         self._warned_leverage_field = False
         self.last_feedback_ts = 0.0
         self.feedback_interval_seconds = 4 * 60 * 60
-        self.max_40015_errors = max(1, int(os.getenv("SYMBOL_40015_MAX_ERRORS", "3")))
-        self.error40015_window_seconds = max(60, int(os.getenv("SYMBOL_40015_WINDOW_SECONDS", "600")))
-        self.symbol_quarantine_seconds = max(60, int(os.getenv("SYMBOL_40015_QUARANTINE_SECONDS", "1800")))
+        self.error_40015_circuit_breaker_enabled = (
+            os.getenv("ERROR_40015_CIRCUIT_BREAKER_ENABLED", "true").lower() == "true"
+        )
+        threshold_raw = os.getenv("ERROR_40015_THRESHOLD", os.getenv("SYMBOL_40015_MAX_ERRORS", "3"))
+        window_raw = os.getenv("ERROR_40015_WINDOW_SECONDS", os.getenv("SYMBOL_40015_WINDOW_SECONDS", "600"))
+        cooldown_raw = os.getenv(
+            "ERROR_40015_COOLDOWN_SECONDS",
+            os.getenv("SYMBOL_40015_QUARANTINE_SECONDS", "900"),
+        )
+        ada_cooldown_raw = os.getenv("ERROR_40015_ADA_COOLDOWN_SECONDS", "14400")
+        try:
+            self.max_40015_errors = max(1, int(threshold_raw))
+        except (TypeError, ValueError):
+            self.max_40015_errors = 3
+        try:
+            self.error40015_window_seconds = max(60, int(window_raw))
+        except (TypeError, ValueError):
+            self.error40015_window_seconds = 600
+        try:
+            self.symbol_quarantine_seconds = max(60, int(cooldown_raw))
+        except (TypeError, ValueError):
+            self.symbol_quarantine_seconds = 900
+        try:
+            self.symbol_quarantine_seconds_ada = max(60, int(ada_cooldown_raw))
+        except (TypeError, ValueError):
+            self.symbol_quarantine_seconds_ada = 14400
         self.reconcile_every_iterations = max(1, int(os.getenv("RECONCILE_EVERY_ITERATIONS", "10")))
         self.desync_fast_reconcile_enabled = os.getenv("DESYNC_FAST_RECONCILE_ENABLED", "true").lower() == "true"
         self.desync_fast_reconcile_interval_seconds = max(
@@ -1040,6 +1199,7 @@ class SDMTradingEngine:
             5, int(os.getenv("DESYNC_FAST_RECONCILE_DEBOUNCE_SECONDS", "30"))
         )
         self.desync_fast_reconcile_until_ts = 0.0
+        self.desync_fast_reconcile_symbol_until: Dict[str, float] = {}
         self.desync_fast_reconcile_last_ts = 0.0
         self.desync_fast_reconcile_last_attempt_ts = 0.0
         self.error_count_40015: Dict[str, List[float]] = defaultdict(list)
@@ -1053,6 +1213,25 @@ class SDMTradingEngine:
         self.bnb_tactical_quarantine_until = 0.0
         self.bnb_tactical_last_eval_ts = 0.0
         self.bnb_tactical_last_pnl = 0.0
+        self.stale_force_close_enabled = os.getenv("STALE_FORCE_CLOSE_ENABLED", "false").lower() == "true"
+        self.stale_force_close_min_age_hours = max(
+            1.0, float(os.getenv("STALE_FORCE_CLOSE_MIN_AGE_HOURS", "40"))
+        )
+        self.stale_force_close_exclude_symbols = {
+            self._normalize_symbol(v)
+            for v in str(os.getenv("STALE_FORCE_CLOSE_EXCLUDE_SYMBOLS", "cmt_solusdt")).split(",")
+            if self._normalize_symbol(v)
+        }
+        self.stale_force_close_min_upnl_pct = float(os.getenv("STALE_FORCE_CLOSE_MIN_UPNL_PCT", "-5.0"))
+        self.stale_force_close_max_upnl_pct = float(os.getenv("STALE_FORCE_CLOSE_MAX_UPNL_PCT", "0.5"))
+        self.stale_force_close_cooldown_hours = max(
+            0.25, float(os.getenv("STALE_FORCE_CLOSE_COOLDOWN_HOURS", "4"))
+        )
+        self.stale_force_close_check_interval_seconds = max(
+            30, int(os.getenv("STALE_FORCE_CLOSE_CHECK_INTERVAL_SECONDS", "120"))
+        )
+        self.stale_force_close_reason = os.getenv("STALE_FORCE_CLOSE_REASON", "FORCE_CLOSE_STALE").strip() or "FORCE_CLOSE_STALE"
+        self._stale_force_close_last_check_ts = 0.0
 
         # Aggressive straddle controls (competition tuning)
         self.stop_new_if_pnl_under = -0.06
@@ -1136,8 +1315,70 @@ class SDMTradingEngine:
             champion_size_parsed = float(champion_size_raw)
         except (TypeError, ValueError):
             champion_size_parsed = 1.10
-        self.champion_size_multiplier = max(1.10, min(1.15, champion_size_parsed))
+        self.champion_size_multiplier = max(1.0, min(1.30, champion_size_parsed))
         self._champion_tuple_warned_incomplete = False
+        self.hard_deny_low_vol_leak_enabled = os.getenv("HARD_DENY_LOW_VOL_LEAK_ENABLED", "true").lower() == "true"
+        self.hard_deny_low_vol_leak_reason = os.getenv("HARD_DENY_LOW_VOL_LEAK_REASON", "LOW_VOL_SHORT_GATE_X3_WITH_ATR").strip()
+
+        # Drift-safe champion override: matches symbol+reason with optional prefix mode.
+        self.champion_override_enabled = os.getenv("CHAMPION_ENABLED", "false").lower() == "true"
+        self.champion_override_match_mode = os.getenv("CHAMPION_MATCH_MODE", "prefix").strip().lower()
+        if self.champion_override_match_mode not in {"exact", "prefix"}:
+            self.champion_override_match_mode = "prefix"
+        self.champion_override_canonicalize = os.getenv("CHAMPION_CANONICALIZE", "true").lower() == "true"
+        champion_tuple_key_raw = str(os.getenv("CHAMPION_TUPLE_KEY", "") or "").strip()
+        if not champion_tuple_key_raw and self.champion_symbol and self.champion_entry_reason:
+            # Backward-compatible derivation from legacy static champion vars.
+            if self.champion_regime:
+                champion_tuple_key_raw = f"{self.champion_symbol}|{self.champion_entry_reason}|{self.champion_regime}"
+            else:
+                champion_tuple_key_raw = f"{self.champion_symbol}|{self.champion_entry_reason}"
+        self.champion_override_tuple_key = self._normalize_champion_override_key(champion_tuple_key_raw)
+        self.champion_override_only_if_clean = os.getenv("CHAMPION_ONLY_IF_CLEAN", "true").lower() == "true"
+        self.champion_override_auto_revert = os.getenv("CHAMPION_AUTO_REVERT", "true").lower() == "true"
+        self.champion_override_exclude_operational_exits = (
+            os.getenv("CHAMPION_EXCLUDE_OPERATIONAL_EXITS", "true").lower() == "true"
+        )
+        try:
+            champion_override_mult = float(os.getenv("CHAMPION_SIZE_MULTIPLIER", "1.10"))
+        except (TypeError, ValueError):
+            champion_override_mult = 1.10
+        self.champion_override_size_multiplier = max(1.0, min(1.30, champion_override_mult))
+        try:
+            champion_override_hours = int(os.getenv("CHAMPION_LOOKBACK_HOURS", "4"))
+        except (TypeError, ValueError):
+            champion_override_hours = 4
+        self.champion_override_lookback_hours = max(1, champion_override_hours)
+        try:
+            champion_override_trades = int(os.getenv("CHAMPION_LOOKBACK_TRADES", "10"))
+        except (TypeError, ValueError):
+            champion_override_trades = 10
+        self.champion_override_lookback_trades = max(1, champion_override_trades)
+        try:
+            champion_override_min_trades = int(os.getenv("CHAMPION_MIN_TRADES", "8"))
+        except (TypeError, ValueError):
+            champion_override_min_trades = 8
+        self.champion_override_min_trades = max(1, champion_override_min_trades)
+        self.champion_override_bypass_stats = os.getenv("CHAMPION_BYPASS_STATS", "false").lower() == "true"
+        try:
+            champion_override_min_wr = float(os.getenv("CHAMPION_MIN_WIN_RATE", "0.70"))
+        except (TypeError, ValueError):
+            champion_override_min_wr = 0.70
+        try:
+            champion_override_min_pf = float(os.getenv("CHAMPION_MIN_PROFIT_FACTOR", "1.50"))
+        except (TypeError, ValueError):
+            champion_override_min_pf = 1.50
+        self.champion_override_min_win_rate = max(0.0, min(1.0, champion_override_min_wr))
+        self.champion_override_min_profit_factor = max(0.0, champion_override_min_pf)
+        self.champion_override_min_abs_pnl = max(
+            0.0,
+            float(
+                os.getenv(
+                    "CHAMPION_MIN_ABS_PNL",
+                    os.getenv("CHAMPION_LADDER_MIN_ABS_PNL", os.getenv("KILL_SWITCH_MIN_ABS_PNL", "0.001")),
+                )
+            ),
+        )
 
         # Stealth mode (deterministic jitter by tuple + 15m bucket).
         self.stealth_mode_enabled = os.getenv("STEALTH_MODE_ENABLED", "true").lower() == "true"
@@ -1152,6 +1393,27 @@ class SDMTradingEngine:
         self.stealth_max_size_scale = max(
             self.stealth_min_size_scale, float(os.getenv("STEALTH_MAX_SIZE_SCALE", "2.0"))
         )
+        self.nonblocking_jitter_enabled = os.getenv("NONBLOCKING_JITTER_ENABLED", "false").lower() == "true"
+        self.nonblocking_jitter_max_delay_s = max(0.0, float(os.getenv("NONBLOCKING_JITTER_MAX_DELAY_S", "15.0")))
+        self._jitter_release_ts_by_tuple: Dict[str, float] = {}
+        self._jitter_armed_delay_by_tuple: Dict[str, float] = {}
+
+        self.single_lane_unfreeze_enabled = os.getenv("SINGLE_LANE_UNFREEZE_ENABLED", "false").lower() == "true"
+        self.single_lane_tuple_key = self._tuple_key_from_env(os.getenv("SINGLE_LANE_TUPLE_KEY", ""))
+        lane_mode = os.getenv("SINGLE_LANE_MATCH_MODE", "exact").strip().lower()
+        self.single_lane_match_mode = lane_mode if lane_mode in {"exact", "prefix", "contains"} else "exact"
+        self.single_lane_max_open_positions = max(1, int(os.getenv("SINGLE_LANE_MAX_OPEN_POSITIONS", "1")))
+        self.single_lane_only_if_clean = os.getenv("SINGLE_LANE_ONLY_IF_CLEAN", "true").lower() == "true"
+        self.operational_exit_reasons = {
+            str(v).strip().lower()
+            for v in str(
+                os.getenv(
+                    "OPERATIONAL_EXIT_REASONS",
+                    "STALE_ADOPTED_RUNNER_TIMEOUT,DESYNC_FORCE_FLATTEN,exchange_flat_detected,FORCE_HEDGED_EXIT_UNBLOCK,FORCE_CLOSE_STALE",
+                )
+            ).split(",")
+            if str(v).strip()
+        }
 
         self.loser_kill_switch_enabled = os.getenv("LOSER_KILL_SWITCH_ENABLED", "true").lower() == "true"
         self.loser_kill_switch = LoserTupleKillSwitch(
@@ -1183,6 +1445,9 @@ class SDMTradingEngine:
                 quarantine_seconds=int(os.getenv("REASON_QUARANTINE_SECONDS", "5400")),
                 refresh_interval_seconds=int(os.getenv("REASON_QUARANTINE_REFRESH_SECONDS", "120")),
                 allow_keys_csv=os.getenv("REASON_QUARANTINE_KEYS", ""),
+                canonicalize_keys=os.getenv("REASON_QUARANTINE_CANONICALIZE", "true").lower() == "true",
+                match_mode=os.getenv("REASON_QUARANTINE_MATCH_MODE", "exact"),
+                exclude_operational_exits=os.getenv("REASON_QUARANTINE_EXCLUDE_OPERATIONAL_EXITS", "true").lower() == "true",
             )
             seeded_reason = self.reason_quarantine.refresh(force=True, position_ledger=self.position_ledger)
             logger.warning(
@@ -1198,6 +1463,28 @@ class SDMTradingEngine:
         self.max_active_symbols = 8
         self.symbols = self.tier_a_pairs + self.tier_b_pairs + self.tier_c_pairs
         self.active_symbols = list(self.symbols)
+        active_symbols_override_raw = str(os.getenv("ACTIVE_SYMBOLS_OVERRIDE", "")).strip()
+        self.active_symbols_override = [
+            s.strip().lower()
+            for s in active_symbols_override_raw.split(",")
+            if s.strip()
+        ]
+        if self.active_symbols_override:
+            override_symbols = [s for s in self.active_symbols_override if s in self.symbols]
+            if override_symbols:
+                self.active_symbols_override = override_symbols
+                self.symbols = list(override_symbols)
+                self.active_symbols = list(override_symbols)
+                self.priority_symbols = list(override_symbols)
+                self.secondary_symbols = []
+                self.max_active_symbols = max(1, len(override_symbols))
+                logger.warning("ACTIVE_SYMBOLS_OVERRIDE applied: {}", override_symbols)
+            else:
+                logger.warning(
+                    "ACTIVE_SYMBOLS_OVERRIDE requested but no symbols matched configured universe: {}",
+                    self.active_symbols_override,
+                )
+                self.active_symbols_override = []
         if self.bnb_tactical_quarantine_enabled and self.bnb_tactical_symbol:
             logger.info(
                 "BNB_TACTICAL_QUARANTINE_ENABLED symbol={} lookback_s={} threshold={} quarantine_s={}",
@@ -1213,6 +1500,44 @@ class SDMTradingEngine:
                 self.desync_fast_reconcile_window_seconds,
                 self.desync_fast_reconcile_debounce_seconds,
                 self.reconcile_every_iterations,
+            )
+        if self.nonblocking_jitter_enabled:
+            logger.info(
+                "NONBLOCKING_JITTER_ENABLED max_delay_s={}",
+                self.nonblocking_jitter_max_delay_s,
+            )
+        if self.single_lane_unfreeze_enabled:
+            logger.warning(
+                "SINGLE_LANE_UNFREEZE_ENABLED tuple={} match_mode={} max_open_positions={} require_clean={}",
+                self.single_lane_tuple_key or "<empty>",
+                self.single_lane_match_mode,
+                self.single_lane_max_open_positions,
+                self.single_lane_only_if_clean,
+            )
+        if self.champion_override_enabled:
+            logger.warning(
+                "CHAMPION_OVERRIDE_ENABLED key={} mode={} canonicalize={} mult={:.3f} clean_only={} lookback_h={} lookback_trades={} thresholds=min_trades:{} min_wr:{:.3f} min_pf:{:.3f}",
+                self.champion_override_tuple_key or "<empty>",
+                self.champion_override_match_mode,
+                self.champion_override_canonicalize,
+                self.champion_override_size_multiplier,
+                self.champion_override_only_if_clean,
+                self.champion_override_lookback_hours,
+                self.champion_override_lookback_trades,
+                self.champion_override_min_trades,
+                self.champion_override_min_win_rate,
+                self.champion_override_min_profit_factor,
+            )
+        if self.sol_long_direct_execution_enabled or self.sol_long_intent_allow:
+            logger.warning(
+                "SOL_LONG_LANE_ENABLED direct_exec={} intent_bypass={}",
+                self.sol_long_direct_execution_enabled,
+                self.sol_long_intent_allow,
+            )
+        if self.hard_deny_low_vol_leak_enabled and self.hard_deny_low_vol_leak_reason:
+            logger.warning(
+                "HARD_DENY_LOW_VOL_LEAK_ENABLED reason_contains={}",
+                self.hard_deny_low_vol_leak_reason,
             )
         if abs(self.champion_size_multiplier - champion_size_parsed) > 1e-9:
             logger.warning(
@@ -1264,6 +1589,36 @@ class SDMTradingEngine:
         regime = str(value or "").strip().lower()
         return regime if regime else "unknown"
 
+    def _is_sol_straddle_bypass_active(self, symbol: Optional[str]) -> bool:
+        return self.sol_straddle_bypass_enabled and self._normalize_symbol(symbol) == "cmt_solusdt"
+
+    def _clear_straddle_state_for_symbol(self, symbol: str, reason: str) -> None:
+        if not hasattr(self, "straddle_manager"):
+            return
+        try:
+            state = self.straddle_manager._get_state(symbol)
+            prev_state = str(state.get("state") or "UNKNOWN")
+            if prev_state in {"IDLE", "DONE"}:
+                return
+            state["state"] = getattr(self.straddle_manager, "STATE_IDLE", "IDLE")
+            state["cooldown_until"] = 0.0
+            state["entry_time"] = 0.0
+            state["runner_start_time"] = 0.0
+            state["size"] = 0.0
+            state["long_size"] = 0.0
+            state["short_size"] = 0.0
+            state["adopted_from_ledger"] = False
+            state["reconcile_checked"] = False
+            logger.warning(
+                "SOL_STRADDLE_BYPASS symbol={} reason={} prev_state={} new_state={}",
+                symbol,
+                reason,
+                prev_state,
+                state["state"],
+            )
+        except Exception as exc:
+            logger.warning("SOL_STRADDLE_BYPASS_FAILED symbol={} reason={} err={}", symbol, reason, exc)
+
     def _tuple_key(self, symbol: Any, entry_reason: Any, regime: Any) -> str:
         return (
             f"{self._normalize_symbol(symbol) or 'unknown'}|"
@@ -1276,6 +1631,253 @@ class SDMTradingEngine:
         while len(parts) < 3:
             parts.append("unknown")
         return parts[0], parts[1], parts[2]
+
+    def _tuple_key_from_env(self, value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        symbol, entry_reason, regime = self._split_tuple_key(raw)
+        return self._tuple_key(symbol, entry_reason, regime)
+
+    def _canonicalize_match_text(self, value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
+            text = text[1:-1].strip()
+        text = text.lower().replace(",", " ").replace(";", " ")
+        parts = [re.sub(r"\s+", " ", p).strip() for p in text.split("|")]
+        return "|".join(parts)
+
+    def _normalize_champion_override_key(self, value: Any) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        if self.champion_override_canonicalize:
+            return self._canonicalize_match_text(raw)
+        return raw
+
+    def _champion_override_matches(self, symbol: Any, entry_reason: Any, regime: Any) -> bool:
+        target_key = self.champion_override_tuple_key
+        if not target_key:
+            return False
+        candidate_full = f"{self._normalize_symbol(symbol)}|{self._normalize_entry_reason(entry_reason)}|{self._normalize_entry_regime(regime)}"
+        candidate_short = f"{self._normalize_symbol(symbol)}|{self._normalize_entry_reason(entry_reason)}"
+        if self.champion_override_canonicalize:
+            candidate_full = self._canonicalize_match_text(candidate_full)
+            candidate_short = self._canonicalize_match_text(candidate_short)
+        if self.champion_override_match_mode == "exact":
+            return target_key in {candidate_short, candidate_full}
+        return candidate_short.startswith(target_key) or candidate_full.startswith(target_key)
+
+    def _should_skip_champion_override_trade(self, trade: Any, min_abs_pnl: float) -> tuple[bool, Optional[float]]:
+        if trade is None:
+            return True, None
+        getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+        close_reason = str(getter("close_reason", "") or "").strip().lower()
+        if close_reason == "exchange_flat_detected":
+            return True, None
+        if self.champion_override_exclude_operational_exits and self._is_operational_exit_reason(close_reason):
+            return True, None
+        reason_norm = self._normalize_entry_reason(getter("entry_reason")).lower()
+        regime_norm = self._normalize_entry_regime(getter("entry_regime")).lower()
+        if close_reason == "exchange_closed" and reason_norm in {"legacy_none", "unknown", "none"} and regime_norm in {"unknown", "none"}:
+            return True, None
+        pnl_float = self._extract_net_realized_pnl(trade)
+        if pnl_float is None:
+            return True, None
+        if min_abs_pnl > 0.0 and abs(pnl_float) < min_abs_pnl:
+            return True, None
+        return False, pnl_float
+
+    def _collect_champion_override_stats(self) -> Dict[str, Any]:
+        stats = self._init_tuple_stats()
+        samples: List[tuple[int, float]] = []
+        min_abs_pnl = float(self.champion_override_min_abs_pnl)
+        lookback_hours = max(1, int(self.champion_override_lookback_hours))
+        try:
+            trades = self.position_ledger.get_recent_closed_trades(hours=lookback_hours, limit=5000)
+        except Exception as exc:
+            logger.warning("CHAMPION_OVERRIDE_STATS_QUERY_FAILED err={}", exc)
+            return self._finalize_tuple_stats(stats)
+
+        for trade in trades:
+            getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
+            if not self._champion_override_matches(
+                getter("symbol"),
+                getter("entry_reason"),
+                getter("entry_regime"),
+            ):
+                continue
+            skip, pnl_float = self._should_skip_champion_override_trade(trade, min_abs_pnl=min_abs_pnl)
+            if skip or pnl_float is None:
+                continue
+            try:
+                close_ms = int(float(getter("close_time", 0.0) or 0.0) * 1000)
+            except (TypeError, ValueError):
+                close_ms = 0
+            samples.append((close_ms, pnl_float))
+
+        samples.sort(key=lambda row: row[0], reverse=True)
+        if self.champion_override_lookback_trades > 0:
+            samples = samples[: self.champion_override_lookback_trades]
+
+        for _, pnl_float in samples:
+            self._update_tuple_stats(stats, pnl_float, weight=1.0)
+
+        finalized = self._finalize_tuple_stats(stats)
+        finalized["sampled_trades"] = int(finalized.get("raw_n", 0) or 0)
+        return finalized
+
+    def _evaluate_champion_override(self, symbol: Any, entry_reason: Any, regime: Any) -> Dict[str, Any]:
+        result: Dict[str, Any] = {
+            "enabled": self.champion_override_enabled,
+            "candidate": False,
+            "apply": False,
+            "reason": "disabled",
+            "multiplier": 1.0,
+            "stats": {},
+            "tuple_key": self._tuple_key(symbol, entry_reason, regime),
+        }
+        if not self.champion_override_enabled:
+            return result
+        if not self._champion_override_matches(symbol, entry_reason, regime):
+            result["reason"] = "not_match"
+            return result
+
+        result["candidate"] = True
+        result["reason"] = "below_gate"
+
+        if self.champion_override_only_if_clean:
+            symbol_not_clean = self._is_symbol_desync_active(symbol)
+            if symbol_not_clean:
+                result["reason"] = "not_clean_symbol_desync"
+                return result
+
+        if self.champion_override_bypass_stats:
+            result["apply"] = True
+            result["reason"] = "apply_bypass"
+            result["multiplier"] = float(self.champion_override_size_multiplier)
+            return result
+
+        stats = self._collect_champion_override_stats()
+        result["stats"] = stats
+        raw_n = int(stats.get("raw_n", 0) or 0)
+        if raw_n < self.champion_override_min_trades:
+            result["reason"] = "insufficient_trades"
+            return result
+
+        win_rate = float(stats.get("win_rate", 0.0) or 0.0)
+        pf = float(stats.get("pf", 0.0) or 0.0)
+        if win_rate < self.champion_override_min_win_rate or pf < self.champion_override_min_profit_factor:
+            result["reason"] = "degraded" if self.champion_override_auto_revert else "below_gate"
+            return result
+
+        result["apply"] = True
+        result["reason"] = "apply"
+        result["multiplier"] = float(self.champion_override_size_multiplier)
+        return result
+
+    def _is_operational_exit_reason(self, exit_reason: Any) -> bool:
+        reason = str(exit_reason or "").strip().lower()
+        return bool(reason) and reason in self.operational_exit_reasons
+
+    def _is_desync_active(self) -> bool:
+        if not self.desync_fast_reconcile_enabled:
+            return False
+        return float(self.desync_fast_reconcile_until_ts or 0.0) > time.time()
+
+    def _is_symbol_desync_active(self, symbol: Any) -> bool:
+        symbol_norm = self._normalize_symbol(symbol)
+        if not symbol_norm:
+            return False
+        now_ts = time.time()
+        until_ts = float(self.desync_fast_reconcile_symbol_until.get(symbol_norm, 0.0) or 0.0)
+        if until_ts <= now_ts:
+            if symbol_norm in self.desync_fast_reconcile_symbol_until:
+                self.desync_fast_reconcile_symbol_until.pop(symbol_norm, None)
+            return False
+        return True
+
+    def _log_sol_entry_decision(
+        self,
+        symbol: Any,
+        reason: Any,
+        regime: Any,
+        champion_match: bool,
+        champion_clean_ok: bool,
+        final_decision: str,
+        block_reason: str,
+        hard_deny: Optional[bool] = None,
+    ) -> None:
+        symbol_norm = self._normalize_symbol(symbol)
+        if symbol_norm != "cmt_solusdt":
+            return
+        reason_text = str(reason or "LEGACY_NONE").strip()
+        if len(reason_text) > 96:
+            reason_text = reason_text[:96]
+        reason_prefix = reason_text.split(":", 1)[0].strip() if reason_text else "LEGACY_NONE"
+        hard_deny_flag = (
+            bool(hard_deny)
+            if hard_deny is not None
+            else (
+                str(block_reason or "").strip().upper() == "HARD_DENY_LOW_VOL_LEAK"
+                or "LOW_VOL_SHORT_GATE_X3_WITH_ATR" in reason_text.upper()
+            )
+        )
+        logger.info(
+            "SOL_ENTRY_DECISION symbol={} reason_prefix={} raw_reason={} regime={} champion_match={} champion_clean_ok={} final={} block_reason={} hard_deny={}",
+            symbol_norm,
+            reason_prefix,
+            reason_text,
+            self._normalize_entry_regime(regime),
+            bool(champion_match),
+            bool(champion_clean_ok),
+            final_decision,
+            block_reason,
+            hard_deny_flag,
+        )
+
+    def _count_open_positions_for_tuple(self, tuple_key: str) -> int:
+        count = 0
+        for pos in self.position_ledger.get_all_positions().values():
+            getter = pos.get if isinstance(pos, dict) else lambda k, d=None: getattr(pos, k, d)
+            pos_tuple = self._tuple_key(
+                getter("symbol"),
+                getter("entry_reason"),
+                getter("entry_regime"),
+            )
+            if pos_tuple == tuple_key:
+                count += 1
+        return count
+
+    def _single_lane_override_meta(self, symbol: Any, entry_reason: Any, regime: Any) -> tuple[bool, str]:
+        if not self.single_lane_unfreeze_enabled:
+            return False, "disabled"
+        tuple_key = self._tuple_key(symbol, entry_reason, regime)
+        symbol_norm, reason_norm, regime_norm = self._split_tuple_key(tuple_key)
+        target_symbol, target_reason, target_regime = self._split_tuple_key(self.single_lane_tuple_key)
+        if not self.single_lane_tuple_key:
+            return False, "missing_tuple_key"
+        symbol_match = symbol_norm == target_symbol
+        regime_match = regime_norm == target_regime
+        if not symbol_match or not regime_match:
+            return False, "tuple_mismatch"
+        reason_match = False
+        if self.single_lane_match_mode == "exact":
+            reason_match = reason_norm == target_reason
+        elif self.single_lane_match_mode == "prefix":
+            reason_match = reason_norm.startswith(target_reason)
+        elif self.single_lane_match_mode == "contains":
+            reason_match = target_reason in reason_norm
+        if not reason_match:
+            return False, f"reason_mismatch:{self.single_lane_match_mode}"
+        if self.single_lane_only_if_clean and self._is_desync_active():
+            return False, "desync_active"
+        open_count = self._count_open_positions_for_tuple(tuple_key)
+        if open_count >= self.single_lane_max_open_positions:
+            return False, f"max_open:{open_count}"
+        return True, "allowed"
 
     def _default_champion_tuple_state(self) -> Dict[str, Any]:
         return {
@@ -1381,6 +1983,13 @@ class SDMTradingEngine:
             return True, None
         getter = trade.get if isinstance(trade, dict) else lambda k, d=None: getattr(trade, k, d)
         close_reason = str(getter("close_reason", "") or "").strip().lower()
+        if self._is_operational_exit_reason(close_reason):
+            logger.info(
+                "SKIP_STATS_OPERATIONAL_EXIT source=champion_ladder exit_reason={} tuple={}",
+                close_reason,
+                self._tuple_key(getter("symbol"), getter("entry_reason"), getter("entry_regime")),
+            )
+            return True, None
         if close_reason == "exchange_flat_detected":
             return True, None
         reason_norm = self._normalize_entry_reason(getter("entry_reason")).lower()
@@ -1735,6 +2344,7 @@ class SDMTradingEngine:
             self.quarantine_symbols.pop(sym, None)
             self.error_count_40015.pop(sym, None)
             logger.info("SYMBOL_QUARANTINE_EXPIRED symbol={}", sym)
+            logger.info("40015_CIRCUIT_BREAKER_RELEASE symbol={}", sym)
 
     def _get_symbol_quarantine_until(self, symbol: str) -> Optional[float]:
         sym = self._normalize_symbol(symbol)
@@ -1848,11 +2458,191 @@ class SDMTradingEngine:
         )
         return True
 
+    def _is_order_success(self, result: Any) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if result.get("order_id") or result.get("client_oid"):
+            return True
+        data = result.get("data")
+        if isinstance(data, dict):
+            if data.get("orderId") or data.get("order_id"):
+                return True
+        return False
+
+    def _get_last_price_for_close(self, symbol: str, fallback_price: float) -> float:
+        close_price = float(fallback_price or 0.0)
+        try:
+            ticker = self.weex.get_ticker(symbol)
+            if isinstance(ticker, dict) and "data" in ticker and isinstance(ticker.get("data"), dict):
+                close_price = float(ticker["data"].get("last", close_price) or close_price)
+            elif isinstance(ticker, dict):
+                close_price = float(ticker.get("last", close_price) or close_price)
+        except Exception:
+            pass
+        return close_price if close_price > 0.0 else float(fallback_price or 0.0)
+
+    def _maybe_force_close_stale_positions(self, now: Optional[float] = None) -> None:
+        if not self.stale_force_close_enabled:
+            return
+        now_ts = now if now is not None else time.time()
+        if (now_ts - float(self._stale_force_close_last_check_ts or 0.0)) < self.stale_force_close_check_interval_seconds:
+            return
+        self._stale_force_close_last_check_ts = now_ts
+
+        positions = self.position_ledger.get_all_positions()
+        if isinstance(positions, dict):
+            iterator = positions.values()
+        else:
+            iterator = positions or []
+
+        for pos in iterator:
+            getter = pos.get if isinstance(pos, dict) else lambda k, d=None: getattr(pos, k, d)
+            symbol = self._normalize_symbol(getter("symbol"))
+            side = str(getter("side", "FLAT") or "FLAT").strip().upper()
+            try:
+                size = float(getter("size", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                size = 0.0
+            if not symbol or side not in {"LONG", "SHORT"} or size <= 0.0:
+                continue
+
+            if symbol in self.stale_force_close_exclude_symbols:
+                logger.info("FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=excluded_symbol", symbol)
+                continue
+            if self._is_symbol_quarantined(symbol):
+                logger.info("FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=symbol_quarantined", symbol)
+                continue
+
+            try:
+                open_time = float(getter("open_time", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                open_time = 0.0
+            if open_time <= 0.0:
+                logger.info("FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=missing_open_time", symbol)
+                continue
+
+            age_hours = max(0.0, (now_ts - open_time) / 3600.0)
+            if age_hours < self.stale_force_close_min_age_hours:
+                continue
+
+            entry_reason = self._normalize_entry_reason(getter("entry_reason"))
+            entry_regime = self._normalize_entry_regime(getter("entry_regime"))
+            if self._champion_override_matches(symbol, entry_reason, entry_regime):
+                logger.info(
+                    "FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=champion_tuple age_h={:.2f} entry_reason={}",
+                    symbol,
+                    age_hours,
+                    entry_reason,
+                )
+                continue
+
+            try:
+                entry_price = float(getter("entry_price", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                entry_price = 0.0
+            try:
+                unrealized_pnl = float(getter("unrealized_pnl", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                unrealized_pnl = 0.0
+            notional = abs(size * entry_price) if entry_price > 0 else 0.0
+            upnl_pct = ((unrealized_pnl / notional) * 100.0) if notional > 0 else 0.0
+
+            if upnl_pct < self.stale_force_close_min_upnl_pct:
+                logger.info(
+                    "FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=upnl_too_negative age_h={:.2f} upnl_pct={:.3f}",
+                    symbol,
+                    age_hours,
+                    upnl_pct,
+                )
+                continue
+            if upnl_pct > self.stale_force_close_max_upnl_pct:
+                logger.info(
+                    "FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=upnl_too_high age_h={:.2f} upnl_pct={:.3f}",
+                    symbol,
+                    age_hours,
+                    upnl_pct,
+                )
+                continue
+
+            close_side = 3 if side == "LONG" else 4
+            logger.warning(
+                "FORCE_CLOSE_STALE symbol={} age_hours={:.2f} upnl_pct={:.3f} side={} size={:.8f} reason={}",
+                symbol,
+                age_hours,
+                upnl_pct,
+                side,
+                size,
+                self.stale_force_close_reason,
+            )
+
+            if self.dry_run_mode:
+                logger.info(
+                    "FORCE_CLOSE_STALE_DRY_RUN symbol={} close_side={} size={:.8f}",
+                    symbol,
+                    close_side,
+                    size,
+                )
+                continue
+
+            result = self.weex.place_order(
+                symbol=symbol,
+                side=close_side,
+                size=size,
+                is_market=True,
+            )
+            if isinstance(result, dict):
+                self._register_40015_error(
+                    symbol=symbol,
+                    error_code=result.get("code"),
+                    error_msg=result.get("msg") or result.get("error"),
+                    source="stale_force_close",
+                )
+            if not self._is_order_success(result):
+                logger.warning(
+                    "FORCE_CLOSE_STALE_SUPPRESSED symbol={} why=close_failed code={} msg={}",
+                    symbol,
+                    result.get("code") if isinstance(result, dict) else None,
+                    str(result.get("msg") or result.get("error") or "")[:220] if isinstance(result, dict) else None,
+                )
+                continue
+
+            close_price = self._get_last_price_for_close(symbol, fallback_price=entry_price)
+            try:
+                self.position_ledger.close_position(
+                    symbol=symbol,
+                    close_price=close_price,
+                    realized_pnl=unrealized_pnl,
+                    close_reason=self.stale_force_close_reason,
+                    fees_estimated=0.0,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "FORCE_CLOSE_STALE_LEDGER_CLOSE_FAILED symbol={} err={}",
+                    symbol,
+                    exc,
+                )
+
+            cooldown_until = now_ts + (self.stale_force_close_cooldown_hours * 3600.0)
+            prior_until = float(self.quarantine_symbols.get(symbol, 0.0) or 0.0)
+            if cooldown_until > prior_until:
+                self.quarantine_symbols[symbol] = cooldown_until
+                logger.warning(
+                    "STALE_COOLDOWN_APPLIED symbol={} until={} cooldown_h={:.2f}",
+                    symbol,
+                    int(cooldown_until),
+                    self.stale_force_close_cooldown_hours,
+                )
+
     def _mark_desync_active(self, reason: str, symbol: Optional[str] = None) -> None:
         if not self.desync_fast_reconcile_enabled:
             return
         now_ts = time.time()
         new_until = now_ts + self.desync_fast_reconcile_window_seconds
+        symbol_norm = self._normalize_symbol(symbol)
+        if symbol_norm:
+            prev_until = float(self.desync_fast_reconcile_symbol_until.get(symbol_norm, 0.0) or 0.0)
+            if new_until > prev_until:
+                self.desync_fast_reconcile_symbol_until[symbol_norm] = new_until
         if new_until > float(self.desync_fast_reconcile_until_ts or 0.0):
             self.desync_fast_reconcile_until_ts = new_until
             logger.warning(
@@ -1869,6 +2659,7 @@ class SDMTradingEngine:
         if float(self.desync_fast_reconcile_until_ts or 0.0) > 0.0:
             logger.info("DESYNC_FAST_RECONCILE_CLEARED source={}", source)
         self.desync_fast_reconcile_until_ts = 0.0
+        self.desync_fast_reconcile_symbol_until = {}
 
     def _maybe_fast_reconcile(self, trigger_reason: str = "loop_tick") -> None:
         if not self.desync_fast_reconcile_enabled:
@@ -1909,12 +2700,26 @@ class SDMTradingEngine:
             return True
         self._mark_desync_active(reason=f"error_40015:{source}", symbol=sym)
 
+        if not self.error_40015_circuit_breaker_enabled:
+            return True
+
         history = [ts for ts in self.error_count_40015.get(sym, []) if (now_ts - ts) <= self.error40015_window_seconds]
         history.append(now_ts)
         self.error_count_40015[sym] = history
+        previous_until = float(self.quarantine_symbols.get(sym, 0.0) or 0.0)
+        if previous_until > now_ts:
+            remaining = int(max(0.0, previous_until - now_ts))
+            logger.warning(
+                "40015_CIRCUIT_BREAKER_FROZEN symbol={} errors_in_window={} cooldown_remaining={}s source={}",
+                sym,
+                len(history),
+                remaining,
+                source,
+            )
+
         if len(history) >= self.max_40015_errors:
-            until_ts = now_ts + self.symbol_quarantine_seconds
-            previous_until = float(self.quarantine_symbols.get(sym, 0.0) or 0.0)
+            cooldown_seconds = self.symbol_quarantine_seconds_ada if sym == "cmt_adausdt" else self.symbol_quarantine_seconds
+            until_ts = now_ts + cooldown_seconds
             if until_ts > previous_until:
                 self.quarantine_symbols[sym] = until_ts
                 logger.error(
@@ -2014,6 +2819,7 @@ class SDMTradingEngine:
 
                 # Opportunistic fast reconcile while desync window is active.
                 self._maybe_fast_reconcile(trigger_reason="loop_tick")
+                self._maybe_force_close_stale_positions()
 
                 if self._diag_gate_log_every and self.iteration % self._diag_gate_log_every == 0:
                     counts = self._diag_gate_counts
@@ -2795,7 +3601,9 @@ class SDMTradingEngine:
 
         for symbol in symbols_to_trade:
             try:
-                if symbol not in self._straddle_tick_seen:
+                sol_straddle_bypass = self._is_sol_straddle_bypass_active(symbol)
+
+                if not sol_straddle_bypass and symbol not in self._straddle_tick_seen:
                     try:
                         ticker = self.weex.get_ticker(symbol)
                         if 'data' in ticker:
@@ -2808,11 +3616,20 @@ class SDMTradingEngine:
                     except Exception as e:
                         logger.warning(f"Straddle update failed for {symbol}: {e}")
                     self._straddle_tick_seen.add(symbol)
+                elif sol_straddle_bypass:
+                    # Direct SOL lane must never inherit stale straddle runner/cooldown state.
+                    self._clear_straddle_state_for_symbol(symbol, reason="long_direct_exec_active")
+                    self._straddle_tick_seen.add(symbol)
 
-
-                blocked = self.straddle_manager.is_blocked(symbol)
+                blocked = False if sol_straddle_bypass else self.straddle_manager.is_blocked(symbol)
 
                 logger.info("DIAG_STRADDLE_BLOCK_CHECK symbol={} blocked={}", symbol, blocked)
+                if sol_straddle_bypass:
+                    logger.info(
+                        "SOL_LIFECYCLE_EVENT event=straddle_check symbol={} lane=long use_straddle=false blocked={} confirm_window_active=unknown",
+                        symbol,
+                        blocked,
+                    )
                 try:
                     _st = self.straddle_manager._get_state(symbol)
                     _st_state = _st.get("state") if isinstance(_st, dict) else None
@@ -2985,6 +3802,16 @@ class SDMTradingEngine:
                     open_positions = len(self.position_ledger.get_all_positions())
                     capital = self.current_capital
                     regime_str = regime.value if hasattr(regime, "value") else str(regime)
+                    champion_clean_ok = (not self._is_symbol_desync_active(symbol)) if self.champion_override_only_if_clean else True
+                    self._log_sol_entry_decision(
+                        symbol=symbol,
+                        reason=proposed_action.get("reason") if isinstance(proposed_action, dict) else "NO_SIGNAL",
+                        regime=regime_str,
+                        champion_match=False,
+                        champion_clean_ok=champion_clean_ok,
+                        final_decision="HOLD",
+                        block_reason="NO_SIGNAL",
+                    )
                     self._emit_ai_log(
                         stage="Decision Making",
                         model="AlphaGenesis-SDM-v1",
@@ -3021,18 +3848,24 @@ class SDMTradingEngine:
                 action_regime = proposed_action.get("regime")
                 if not action_regime:
                     action_regime = regime.value if hasattr(regime, "value") else str(regime)
+                action_tuple_key = self._tuple_key(symbol, action_reason, action_regime)
+                champion_match = self.champion_override_enabled and self._champion_override_matches(
+                    symbol,
+                    action_reason,
+                    action_regime,
+                )
+                champion_clean_ok = (not self._is_symbol_desync_active(symbol)) if self.champion_override_only_if_clean else True
 
-                if self.loser_kill_switch_enabled and self.loser_kill_switch.is_blocked(symbol, action_reason, action_regime):
-                    block_meta = self.loser_kill_switch.get_block_meta(symbol, action_reason, action_regime)
+                if (
+                    self.hard_deny_low_vol_leak_enabled
+                    and self.hard_deny_low_vol_leak_reason
+                    and self.hard_deny_low_vol_leak_reason.lower() in str(action_reason).lower()
+                ):
                     logger.error(
-                        "LOSER_TUPLE_BLOCKED_TRADE symbol={} entry_reason={} regime={} n={} win_rate={} pf={} total_pnl={}",
+                        "HARD_DENY_LOW_VOL_LEAK symbol={} entry_reason={} regime={}",
                         symbol,
                         action_reason,
                         action_regime,
-                        block_meta.get("n"),
-                        block_meta.get("win_rate"),
-                        block_meta.get("profit_factor"),
-                        block_meta.get("total_pnl"),
                     )
                     open_positions = len(self.position_ledger.get_all_positions())
                     capital = self.current_capital
@@ -3048,36 +3881,61 @@ class SDMTradingEngine:
                             "straddle_active": False,
                             "open_positions": open_positions,
                             "capital": capital,
-                            "kill_switch": True,
-                            "kill_switch_meta": block_meta,
+                            "hard_deny": "LOW_VOL_SHORT_GATE_X3_WITH_ATR",
                         },
                         output_payload={
                             "action": "HOLD",
-                            "reason": "LOSER_TUPLE_BLOCKED",
-                            "kill_switch_meta": block_meta,
+                            "reason": "HARD_DENY_LOW_VOL_LEAK",
                         },
                         explanation=(
-                            "HOLD: reason=LOSER_TUPLE_BLOCKED tuple={symbol}|{entry_reason}|{regime} "
-                            "metrics={meta}"
+                            "HOLD: reason=HARD_DENY_LOW_VOL_LEAK "
+                            "tuple={symbol}|{entry_reason}|{regime}"
                         ).format(
                             symbol=symbol,
                             entry_reason=action_reason,
                             regime=action_regime,
-                            meta=block_meta,
                         ),
+                    )
+                    self._log_sol_entry_decision(
+                        symbol=symbol,
+                        reason=action_reason,
+                        regime=action_regime,
+                        champion_match=champion_match,
+                        champion_clean_ok=champion_clean_ok,
+                        final_decision="BLOCK",
+                        block_reason="HARD_DENY_LOW_VOL_LEAK",
+                        hard_deny=True,
                     )
                     continue
 
-                if self.reason_quarantine_enabled and self.reason_quarantine is not None:
-                    if self.reason_quarantine.is_quarantined(action_reason, action_regime):
-                        block_meta = self.reason_quarantine.get_meta(action_reason, action_regime)
+                if self.loser_kill_switch_enabled and self.loser_kill_switch.is_blocked(symbol, action_reason, action_regime):
+                    allow_single_lane, single_lane_reason = self._single_lane_override_meta(
+                        symbol,
+                        action_reason,
+                        action_regime,
+                    )
+                    if allow_single_lane:
+                        logger.warning(
+                            "SINGLE_LANE_ALLOW tuple={} override=loser_tuple",
+                            action_tuple_key,
+                        )
+                    else:
+                        if self.single_lane_unfreeze_enabled and single_lane_reason != "tuple_mismatch":
+                            logger.info(
+                                "SINGLE_LANE_DENY tuple={} why={} override=loser_tuple",
+                                action_tuple_key,
+                                single_lane_reason,
+                            )
+                    block_meta = self.loser_kill_switch.get_block_meta(symbol, action_reason, action_regime)
+                    if not allow_single_lane:
                         logger.error(
-                            "REASON_QUARANTINE_BLOCK symbol={} entry_reason={} entry_regime={} until_ms={} n={} total_pnl={}",
+                            "LOSER_TUPLE_BLOCKED_TRADE symbol={} entry_reason={} regime={} n={} win_rate={} pf={} total_pnl={}",
                             symbol,
                             action_reason,
                             action_regime,
-                            block_meta.get("quarantine_until_ms"),
                             block_meta.get("n"),
+                            block_meta.get("win_rate"),
+                            block_meta.get("profit_factor"),
                             block_meta.get("total_pnl"),
                         )
                         open_positions = len(self.position_ledger.get_all_positions())
@@ -3094,23 +3952,105 @@ class SDMTradingEngine:
                                 "straddle_active": False,
                                 "open_positions": open_positions,
                                 "capital": capital,
-                                "reason_quarantine": True,
-                                "reason_quarantine_meta": block_meta,
+                                "kill_switch": True,
+                                "kill_switch_meta": block_meta,
                             },
                             output_payload={
                                 "action": "HOLD",
-                                "reason": "REASON_QUARANTINED",
-                                "reason_quarantine_meta": block_meta,
+                                "reason": "LOSER_TUPLE_BLOCKED",
+                                "kill_switch_meta": block_meta,
                             },
                             explanation=(
-                                "HOLD: reason=REASON_QUARANTINED key={reason}|{regime} meta={meta}"
+                                "HOLD: reason=LOSER_TUPLE_BLOCKED tuple={symbol}|{entry_reason}|{regime} "
+                                "metrics={meta}"
                             ).format(
-                                reason=action_reason,
+                                symbol=symbol,
+                                entry_reason=action_reason,
                                 regime=action_regime,
                                 meta=block_meta,
                             ),
                         )
+                        self._log_sol_entry_decision(
+                            symbol=symbol,
+                            reason=action_reason,
+                            regime=action_regime,
+                            champion_match=champion_match,
+                            champion_clean_ok=champion_clean_ok,
+                            final_decision="BLOCK",
+                            block_reason="LOSER_TUPLE_BLOCKED",
+                        )
                         continue
+
+                if self.reason_quarantine_enabled and self.reason_quarantine is not None:
+                    if self.reason_quarantine.is_quarantined(action_reason, action_regime):
+                        allow_single_lane, single_lane_reason = self._single_lane_override_meta(
+                            symbol,
+                            action_reason,
+                            action_regime,
+                        )
+                        if allow_single_lane:
+                            logger.warning(
+                                "SINGLE_LANE_ALLOW tuple={} override=reason_quarantine",
+                                action_tuple_key,
+                            )
+                        else:
+                            if self.single_lane_unfreeze_enabled and single_lane_reason != "tuple_mismatch":
+                                logger.info(
+                                    "SINGLE_LANE_DENY tuple={} why={} override=reason_quarantine",
+                                    action_tuple_key,
+                                    single_lane_reason,
+                                )
+                        block_meta = self.reason_quarantine.get_meta(action_reason, action_regime)
+                        if not allow_single_lane:
+                            logger.error(
+                                "REASON_QUARANTINE_BLOCK symbol={} entry_reason={} entry_regime={} until_ms={} n={} total_pnl={}",
+                                symbol,
+                                action_reason,
+                                action_regime,
+                                block_meta.get("quarantine_until_ms"),
+                                block_meta.get("n"),
+                                block_meta.get("total_pnl"),
+                            )
+                            open_positions = len(self.position_ledger.get_all_positions())
+                            capital = self.current_capital
+                            self._emit_ai_log(
+                                stage="Decision Making",
+                                model="AlphaGenesis-SDM-v1",
+                                input_payload={
+                                    "symbol": symbol,
+                                    "regime": action_regime,
+                                    "signal": action_reason,
+                                    "entry_reason": action_reason,
+                                    "confidence": proposed_action.get("confidence", 0.0),
+                                    "straddle_active": False,
+                                    "open_positions": open_positions,
+                                    "capital": capital,
+                                    "reason_quarantine": True,
+                                    "reason_quarantine_meta": block_meta,
+                                },
+                                output_payload={
+                                    "action": "HOLD",
+                                    "reason": "REASON_QUARANTINED",
+                                    "reason_quarantine_meta": block_meta,
+                                },
+                                explanation=(
+                                    "HOLD: reason=REASON_QUARANTINED key={reason}|{regime} meta={meta}"
+                                ).format(
+                                    reason=action_reason,
+                                    regime=action_regime,
+                                    meta=block_meta,
+                                ),
+                            )
+                            self._log_sol_entry_decision(
+                                symbol=symbol,
+                                reason=action_reason,
+                                regime=action_regime,
+                                champion_match=champion_match,
+                                champion_clean_ok=champion_clean_ok,
+                                final_decision="BLOCK",
+                                block_reason="REASON_QUARANTINED",
+                            )
+                            continue
 
                 champion_quarantine_until_ms = int(proposed_action.get("champion_quarantine_until_ms", 0) or 0)
                 if bool(proposed_action.get("champion_quarantined")):
@@ -3156,12 +4096,47 @@ class SDMTradingEngine:
                             until_ms=champion_quarantine_until_ms,
                         ),
                     )
+                    self._log_sol_entry_decision(
+                        symbol=symbol,
+                        reason=action_reason,
+                        regime=action_regime,
+                        champion_match=champion_match,
+                        champion_clean_ok=champion_clean_ok,
+                        final_decision="BLOCK",
+                        block_reason="CHAMPION_TUPLE_QUARANTINED",
+                    )
                     continue
 
                 self._augment_action_with_risk_metrics(proposed_action)
 
-                # Evaluate action against intent graph
-                should_execute, reasoning = self.intent_graph.should_execute_action(proposed_action)
+                # Evaluate action against intent graph using normalized position sizing.
+                # The intent graph expects ratio-like constraints, while strategy actions carry raw contract size.
+                intent_eval_action = dict(proposed_action)
+                try:
+                    raw_size = float(proposed_action.get("position_size", 0.0) or 0.0)
+                    raw_price = float(proposed_action.get("entry_price", 0.0) or 0.0)
+                    raw_leverage = max(1.0, float(proposed_action.get("max_leverage", 1.0) or 1.0))
+                    capital_base = max(1.0, float(self.current_capital or 0.0))
+                    margin_usage_ratio = (abs(raw_size) * max(raw_price, 0.0)) / (capital_base * raw_leverage)
+                    intent_eval_action["position_size"] = margin_usage_ratio
+                except Exception:
+                    pass
+
+                should_execute, reasoning = self.intent_graph.should_execute_action(intent_eval_action)
+                sol_long_intent_bypass = (
+                    self.sol_long_intent_allow
+                    and symbol == "cmt_solusdt"
+                    and str(proposed_action.get("direction") or "").upper() == "LONG"
+                    and "uptrend momentum" in str(proposed_action.get("reason") or "").lower()
+                )
+                if not should_execute and sol_long_intent_bypass:
+                    should_execute = True
+                    logger.warning(
+                        "SOL_LONG_INTENT_BYPASS symbol={} applied=1 reason={} regime={}",
+                        symbol,
+                        str(proposed_action.get("reason") or ""),
+                        str(proposed_action.get("regime") or ""),
+                    )
 
                 if not should_execute:
                     logger.info(f"Intent graph rejected: {reasoning}")
@@ -3202,6 +4177,15 @@ class SDMTradingEngine:
                             capital=capital,
                         ),
                     )
+                    self._log_sol_entry_decision(
+                        symbol=symbol,
+                        reason=action_reason,
+                        regime=action_regime,
+                        champion_match=champion_match,
+                        champion_clean_ok=champion_clean_ok,
+                        final_decision="BLOCK",
+                        block_reason="INTENT_GRAPH_REJECTED",
+                    )
                     continue
 
                 # Apply constraint propagation (shape action via fields)
@@ -3215,9 +4199,27 @@ class SDMTradingEngine:
 
                 if not is_ethical:
                     logger.warning(f"Ethics engine blocked action: {ethical_reasoning}")
+                    self._log_sol_entry_decision(
+                        symbol=symbol,
+                        reason=action_reason,
+                        regime=action_regime,
+                        champion_match=champion_match,
+                        champion_clean_ok=champion_clean_ok,
+                        final_decision="BLOCK",
+                        block_reason="ETHICS_BLOCKED",
+                    )
                     continue
 
                 # Execute!
+                self._log_sol_entry_decision(
+                    symbol=symbol,
+                    reason=action_reason,
+                    regime=action_regime,
+                    champion_match=champion_match,
+                    champion_clean_ok=champion_clean_ok,
+                    final_decision="ENTER",
+                    block_reason="EXECUTE_ACTION",
+                )
                 self._execute_action(
                     symbol=symbol,
                     action=ethically_adjusted,
@@ -3533,6 +4535,44 @@ class SDMTradingEngine:
                             regime_str,
                             self.champion_size_multiplier,
                         )
+
+        champion_override_eval = self._evaluate_champion_override(
+            symbol=symbol,
+            entry_reason=signal_reason,
+            regime=regime_str,
+        )
+        if bool(champion_override_eval.get("apply")):
+            requested_mult = max(1.0, float(champion_override_eval.get("multiplier", 1.0) or 1.0))
+            current_mult = max(1.0, float(champion_multiplier if champion_scale_applied else 1.0))
+            if requested_mult > current_mult + 1e-9:
+                size_scale *= (requested_mult / current_mult)
+                champion_multiplier = requested_mult
+                champion_level = requested_mult
+                champion_scale_applied = True
+                champion_tuple_key = self._tuple_key(symbol, signal_reason, regime_str)
+                logger.info(
+                    "CHAMPION_APPLIED symbol={} tuple={} mult={:.3f} source=override stats={}",
+                    symbol,
+                    champion_tuple_key,
+                    requested_mult,
+                    champion_override_eval.get("stats", {}),
+                )
+            else:
+                logger.info(
+                    "CHAMPION_SUPPRESSED symbol={} tuple={} why=existing_multiplier current_mult={:.3f} requested_mult={:.3f}",
+                    symbol,
+                    champion_tuple_key,
+                    current_mult,
+                    requested_mult,
+                )
+        elif bool(champion_override_eval.get("candidate")):
+            logger.info(
+                "CHAMPION_SUPPRESSED symbol={} tuple={} why={} stats={}",
+                symbol,
+                self._tuple_key(symbol, signal_reason, regime_str),
+                champion_override_eval.get("reason", "unknown"),
+                champion_override_eval.get("stats", {}),
+            )
 
         size_scale_pre_stealth = size_scale
         stealth_profile = self._get_stealth_profile(
@@ -3859,12 +4899,66 @@ class SDMTradingEngine:
                 intent_graph_blocked=False
             )
 
-            if self.straddle_manager.is_blocked(symbol):
+            action_reason = str(action.get("reason") or "")
+            action_regime = str(action.get("regime") or "")
+            action_reason_norm = self._normalize_entry_reason(action_reason)
+            action_regime_norm = self._normalize_entry_regime(action_regime)
+            champion_direct_execution = (
+                self.champion_direct_execution_enabled
+                and symbol == "cmt_solusdt"
+                and action_reason_norm == "Downtrend momentum"
+                and "downtrend" in action_regime_norm.lower()
+                and bool(action.get("champion_scale_applied"))
+                and str(action.get("direction") or "").upper() == "SHORT"
+            )
+            sol_long_direct_execution = (
+                self.sol_long_direct_execution_enabled
+                and symbol == "cmt_solusdt"
+                and "uptrend momentum" in action_reason_norm.lower()
+                and str(action.get("direction") or "").upper() == "LONG"
+            )
+            if symbol == "cmt_solusdt" and str(action.get("direction") or "").upper() == "SHORT":
+                logger.info(
+                    "SOL_DIRECT_EXEC_CHECK symbol={} raw_reason={} normalized_reason={} regime={} champion_applied={} matched={}",
+                    symbol,
+                    action_reason,
+                    action_reason_norm,
+                    action_regime_norm,
+                    bool(action.get("champion_scale_applied")),
+                    champion_direct_execution,
+                )
+            if symbol == "cmt_solusdt" and str(action.get("direction") or "").upper() == "LONG":
+                logger.info(
+                    "SOL_LONG_DIRECT_CHECK symbol={} raw_reason={} normalized_reason={} regime={} enabled={} matched={}",
+                    symbol,
+                    action_reason,
+                    action_reason_norm,
+                    action_regime_norm,
+                    self.sol_long_direct_execution_enabled,
+                    sol_long_direct_execution,
+                )
+
+            if self.straddle_manager.is_blocked(symbol) and not champion_direct_execution and not sol_long_direct_execution:
                 logger.info(f"⏸ STRADDLE ACTIVE - skipping execution for {symbol}")
                 self._diag_block_counts["blocked_straddle_active"] += 1
                 return
 
-            if action.get('reason') == 'LOW_VOL_SHORT_GATE_X3_WITH_ATR':
+            if champion_direct_execution:
+                logger.info(
+                    "CHAMPION_DIRECT_EXECUTION symbol={} reason={} regime={} champion_applied={}",
+                    symbol,
+                    action_reason_norm,
+                    action_regime_norm,
+                    bool(action.get("champion_scale_applied")),
+                )
+            elif sol_long_direct_execution:
+                logger.info(
+                    "SOL_LONG_DIRECT_EXECUTION symbol={} reason={} regime={}",
+                    symbol,
+                    action_reason_norm,
+                    action_regime_norm,
+                )
+            elif action_reason == 'LOW_VOL_SHORT_GATE_X3_WITH_ATR':
                 logger.info("STRADDLE_BYPASS_LOW_VOL_ATR symbol={} confidence={:.3f}", symbol, float(action.get('confidence', 0.0)))
             else:
                 if action.get('confidence', 0.0) >= self.straddle_confidence_threshold:
@@ -3947,7 +5041,8 @@ class SDMTradingEngine:
             if ledger_approved:
                 ledger_approved, ledger_reason = self.position_ledger.can_open_position(
                     symbol=symbol,
-                    side=action['direction']
+                    side=action['direction'],
+                    requested_size=action.get('position_size', 0.0),
                 )
 
             if not ledger_approved:
@@ -4281,8 +5376,50 @@ class SDMTradingEngine:
             stealth_delay_ms = int(action.get("stealth_time_jitter_ms", 0) or 0)
             if self.stealth_mode_enabled and stealth_delay_ms > 0:
                 bounded_delay_ms = min(stealth_delay_ms, self.stealth_time_jitter_ms_max)
-                if bounded_delay_ms > 0:
-                    time.sleep(float(bounded_delay_ms) / 1000.0)
+                bounded_delay_s = max(0.0, float(bounded_delay_ms) / 1000.0)
+                if self.nonblocking_jitter_enabled:
+                    bounded_delay_s = min(bounded_delay_s, self.nonblocking_jitter_max_delay_s)
+                    tuple_key = str(
+                        action.get("champion_tuple_key")
+                        or self._tuple_key(symbol, action.get("reason"), action.get("regime"))
+                    )
+                    now_ts = time.time()
+                    release_ts = float(self._jitter_release_ts_by_tuple.get(tuple_key, 0.0) or 0.0)
+                    if release_ts <= 0.0 and bounded_delay_s > 0.0:
+                        release_ts = now_ts + bounded_delay_s
+                        self._jitter_release_ts_by_tuple[tuple_key] = release_ts
+                        self._jitter_armed_delay_by_tuple[tuple_key] = bounded_delay_s
+                        logger.info(
+                            "JITTER_ARM symbol={} tuple={} delay_s={:.3f}",
+                            symbol,
+                            tuple_key,
+                            bounded_delay_s,
+                        )
+                        decision.executed = False
+                        decision.execution_reason = "jitter_armed"
+                        self.journal.log_decision(decision)
+                        return
+                    if release_ts > now_ts:
+                        logger.info(
+                            "JITTER_WAIT symbol={} tuple={} remaining_s={:.3f}",
+                            symbol,
+                            tuple_key,
+                            release_ts - now_ts,
+                        )
+                        decision.executed = False
+                        decision.execution_reason = "jitter_wait"
+                        self.journal.log_decision(decision)
+                        return
+                    if release_ts > 0.0:
+                        arm_delay_s = float(self._jitter_armed_delay_by_tuple.pop(tuple_key, bounded_delay_s) or 0.0)
+                        self._jitter_release_ts_by_tuple.pop(tuple_key, None)
+                        waited_s = max(0.0, now_ts - (release_ts - arm_delay_s))
+                        logger.info(
+                            "JITTER_RELEASE symbol={} tuple={} waited_s={:.3f}",
+                            symbol,
+                            tuple_key,
+                            waited_s,
+                        )
 
             # Gates passed - execute or simulate
             if self.dry_run_mode:
@@ -4445,6 +5582,11 @@ class SDMTradingEngine:
                     logger.error(f"⚠️ Order placed but ledger failed to record!")
                 else:
                     logger.info(f"✓ Position recorded in ledger")
+                    if self._is_sol_straddle_bypass_active(symbol) and str(action.get("direction") or "").upper() == "LONG":
+                        logger.info(
+                            "SOL_LIFECYCLE_EVENT event=position_opened symbol={} lane=long use_straddle=false ledger_side=LONG exchange_side=unknown position_age_s=0 confirm_window_active=true",
+                            symbol,
+                        )
 
                 # Legacy learning feedback
                 feedback = PerformanceFeedback(
@@ -4522,12 +5664,15 @@ class SDMTradingEngine:
             # Convert WEEX positions to ledger format
             exchange_positions = []
             for pos in positions:
-                if pos.get('symbol') in active_straddles:
+                pos_symbol = pos.get('symbol')
+                if pos_symbol in active_straddles and not self._is_sol_straddle_bypass_active(pos_symbol):
                     continue
+                if pos_symbol in active_straddles and self._is_sol_straddle_bypass_active(pos_symbol):
+                    logger.info("SOL_STRADDLE_BYPASS_RECONCILE_INCLUDE symbol={} source={}", pos_symbol, source)
                 size = float(pos.get('size', 0))
                 if size > 0:  # Only active positions
                     exchange_positions.append({
-                        'symbol': pos.get('symbol'),
+                        'symbol': pos_symbol,
                         'side': pos.get('side', 'LONG'),
                         'size': size
                     })
@@ -4608,6 +5753,10 @@ class SDMTradingEngine:
 
     def _update_symbol_selection(self, balance: float):
         """After 72h, conditionally add ETH if BTC performed >12%."""
+        if getattr(self, "active_symbols_override", None):
+            self.active_symbols = list(self.active_symbols_override)
+            return
+
         if self.btc_base_balance is None:
             self.btc_base_balance = balance
 

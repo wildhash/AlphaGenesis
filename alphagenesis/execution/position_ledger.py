@@ -42,6 +42,9 @@ class Position:
     realized_pnl: float = 0.0
     last_update_ts: float = 0.0
     last_exchange_sync_ts: float = 0.0
+    initial_size: float = 0.0
+    add_count: int = 0
+    last_add_ts: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -111,6 +114,21 @@ class PositionLedger:
         # Config
         self.cooldown_seconds = 180  # 3 minutes after close
         self.max_trades_per_day = 20  # Per symbol (reduced from 50 - fee control)
+        self.allow_same_side_scale_in = str(
+            os.getenv("ALLOW_SAME_SIDE_SCALE_IN", "false")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            self.same_side_scale_in_max_adds = max(0, int(os.getenv("SAME_SIDE_SCALE_IN_MAX_ADDS", "0") or 0))
+        except (TypeError, ValueError):
+            self.same_side_scale_in_max_adds = 0
+        try:
+            self.same_side_scale_in_min_seconds = max(0, int(os.getenv("SAME_SIDE_SCALE_IN_MIN_SECONDS", "300") or 300))
+        except (TypeError, ValueError):
+            self.same_side_scale_in_min_seconds = 300
+        try:
+            self.same_side_scale_in_max_total_multiplier = max(1.0, float(os.getenv("SAME_SIDE_SCALE_IN_MAX_TOTAL_MULTIPLIER", "1.0") or 1.0))
+        except (TypeError, ValueError):
+            self.same_side_scale_in_max_total_multiplier = 1.0
         self.desync_grace_seconds = 30  # Wait 30s before SAFE MODE
         self.save_interval_seconds = 5  # Throttle saves
         self.max_closed_trades = 1000  # Keep last N for learning
@@ -155,6 +173,13 @@ class PositionLedger:
 
         self._load()
         self._auto_reset_daily_counters()
+        if self.allow_same_side_scale_in:
+            logger.warning(
+                "SAME_SIDE_SCALE_IN_ENABLED max_adds={} min_seconds={} max_total_multiplier={}",
+                self.same_side_scale_in_max_adds,
+                self.same_side_scale_in_min_seconds,
+                self.same_side_scale_in_max_total_multiplier,
+            )
         logger.info(f"PositionLedger initialized with {len([p for p in self.positions.values() if p.side != 'FLAT'])} open positions")
 
     @staticmethod
@@ -271,7 +296,7 @@ class PositionLedger:
             position_id=str(uuid.uuid4())
         ))
 
-    def can_open_position(self, symbol: str, side: Literal['LONG', 'SHORT']) -> tuple[bool, str]:
+    def can_open_position(self, symbol: str, side: Literal['LONG', 'SHORT'], requested_size: float = 0.0) -> tuple[bool, str]:
         """
         CRITICAL CONFLICT CHECK.
 
@@ -307,9 +332,40 @@ class PositionLedger:
         if current.side == 'SHORT' and side == 'LONG':
             return False, f"❌ CONFLICT: Cannot LONG while SHORT position exists (size: {current.size})"
 
-        # 5. Check if position already exists same side (no scaling)
+        # 5. Check if position already exists same side
         if current.side == side and current.size > 0:
-            return False, f"Position already exists: {side} {current.size}"
+            if not self.allow_same_side_scale_in:
+                return False, f"Position already exists: {side} {current.size}"
+
+            add_count = int(current.add_count or 0)
+            if add_count >= self.same_side_scale_in_max_adds:
+                return False, f"Scale-in cap reached: adds={add_count}, max={self.same_side_scale_in_max_adds}"
+
+            last_add_ts = float(current.last_add_ts or current.open_time or 0.0)
+            cooldown_remaining = self.same_side_scale_in_min_seconds - (now - last_add_ts)
+            if cooldown_remaining > 0:
+                return False, f"Scale-in cooldown active: {int(cooldown_remaining)}s remaining"
+
+            try:
+                requested = max(0.0, float(requested_size or 0.0))
+            except (TypeError, ValueError):
+                requested = 0.0
+
+            base_size = float(current.initial_size or 0.0)
+            if base_size <= 0.0:
+                base_size = float(current.size or 0.0)
+            max_total_size = base_size * self.same_side_scale_in_max_total_multiplier
+            projected_size = float(current.size or 0.0) + requested
+            if requested > 0.0 and projected_size > max_total_size:
+                return False, (
+                    f"Scale-in max_total exceeded: projected={projected_size:.4f} "
+                    f"> cap={max_total_size:.4f} (base={base_size:.4f})"
+                )
+
+            return True, (
+                f"SCALE_IN_ALLOWED side={side} add_count={add_count} "
+                f"req={requested:.4f} max_total={max_total_size:.4f}"
+            )
 
         return True, "OK"
 
@@ -335,7 +391,7 @@ class PositionLedger:
                 logger.debug(f"Position already recorded for client_order_id {client_order_id}")
                 return True
 
-        can_open, reason = self.can_open_position(symbol, side)
+        can_open, reason = self.can_open_position(symbol, side, size)
 
         if not can_open:
             logger.warning(f"Cannot open {side} on {symbol}: {reason}")
@@ -347,6 +403,67 @@ class PositionLedger:
         normalized_entry_regime = str(entry_regime).strip().lower() if entry_regime is not None else ""
         if not normalized_entry_regime:
             normalized_entry_regime = "unknown"
+
+        current_pos = self.get_position(symbol)
+        if self.allow_same_side_scale_in and current_pos.side == side and current_pos.size > 0:
+            add_size = max(0.0, float(size or 0.0))
+            if add_size <= 0.0:
+                logger.warning(f"Cannot scale {side} on {symbol}: invalid add_size={add_size}")
+                return False
+
+            now_ts = time.time()
+            old_size = float(current_pos.size or 0.0)
+            old_entry = float(current_pos.entry_price or 0.0)
+            new_size = old_size + add_size
+            if new_size <= 0.0:
+                logger.warning(f"Cannot scale {side} on {symbol}: invalid new_size={new_size}")
+                return False
+
+            weighted_entry = ((old_entry * old_size) + (float(entry_price) * add_size)) / new_size
+            base_size = float(current_pos.initial_size or 0.0)
+            if base_size <= 0.0:
+                base_size = old_size
+
+            current_pos.size = new_size
+            current_pos.entry_price = weighted_entry
+            current_pos.client_order_id = client_order_id or current_pos.client_order_id
+            current_pos.order_id = order_id or current_pos.order_id
+            current_pos.entry_reason = normalized_entry_reason
+            current_pos.entry_regime = normalized_entry_regime
+            current_pos.last_update_ts = now_ts
+            current_pos.last_exchange_sync_ts = now_ts
+            current_pos.initial_size = base_size
+            current_pos.add_count = int(current_pos.add_count or 0) + 1
+            current_pos.last_add_ts = now_ts
+
+            self.positions[symbol] = current_pos
+            self.trades_today[symbol] = self.trades_today.get(symbol, 0) + 1
+            self.cooldown_until.pop(symbol, None)
+            self.desync_events.pop(symbol, None)
+            self.post_open_confirm_until.pop(symbol, None)
+            if self.post_open_confirmation_seconds > 0:
+                confirm_until = now_ts + self.post_open_confirmation_seconds
+                self.post_open_confirm_until[symbol] = confirm_until
+                logger.info(
+                    "POST_OPEN_CONFIRMATION_ARMED symbol={} until={} window_s={}",
+                    symbol,
+                    int(confirm_until),
+                    int(self.post_open_confirmation_seconds),
+                )
+
+            self._save()
+            logger.warning(
+                "✅ Scaled into {} position on {}: add_size={}, old_size={}, new_size={}, old_entry={}, new_entry={}, add_count={}",
+                side,
+                symbol,
+                add_size,
+                old_size,
+                new_size,
+                old_entry,
+                weighted_entry,
+                current_pos.add_count,
+            )
+            return True
 
         # Create position
         position_id = str(uuid.uuid4())
@@ -362,7 +479,10 @@ class PositionLedger:
             entry_reason=normalized_entry_reason,
             entry_regime=normalized_entry_regime,
             last_update_ts=time.time(),
-            last_exchange_sync_ts=time.time()
+            last_exchange_sync_ts=time.time(),
+            initial_size=size,
+            add_count=0,
+            last_add_ts=time.time(),
         )
 
         # Increment trade count

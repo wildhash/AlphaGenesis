@@ -22,6 +22,158 @@ class MomentumHybridEngine:
         self.ema_fast = 20
         self.ema_slow = 50
         self.rsi_period = 14
+        # Optional SOL-only signal nudge for finals acceleration.
+        self.sol_champion_signal_boost_enabled = (
+            os.getenv("SOL_CHAMPION_SIGNAL_BOOST_ENABLED", "false").lower() == "true"
+        )
+        self.sol_champion_signal_boost_symbol = str(
+            os.getenv("SOL_CHAMPION_SIGNAL_BOOST_SYMBOL", "cmt_solusdt")
+        ).strip().lower()
+        try:
+            self.sol_champion_signal_boost_rsi_max = float(os.getenv("SOL_CHAMPION_SIGNAL_BOOST_RSI_MAX", "48.0"))
+        except (TypeError, ValueError):
+            self.sol_champion_signal_boost_rsi_max = 48.0
+        try:
+            self.sol_champion_signal_boost_rsi_min = float(os.getenv("SOL_CHAMPION_SIGNAL_BOOST_RSI_MIN", "22.0"))
+        except (TypeError, ValueError):
+            self.sol_champion_signal_boost_rsi_min = 22.0
+        try:
+            self.sol_champion_signal_boost_momentum_threshold = float(
+                os.getenv("SOL_CHAMPION_SIGNAL_BOOST_MOMENTUM_THRESHOLD", "-0.25")
+            )
+        except (TypeError, ValueError):
+            self.sol_champion_signal_boost_momentum_threshold = -0.25
+        self.sol_champion_signal_boost_allow_trend_up_if_ema20_slope_neg = (
+            os.getenv("SOL_CHAMPION_SIGNAL_BOOST_ALLOW_TREND_UP_IF_EMA20_SLOPE_NEG", "false").lower() == "true"
+        )
+        try:
+            self.sol_champion_signal_boost_ema20_slope_max = float(
+                os.getenv("SOL_CHAMPION_SIGNAL_BOOST_EMA20_SLOPE_MAX", "0.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_champion_signal_boost_ema20_slope_max = 0.0
+        self.sol_champion_stable_reason_enabled = (
+            os.getenv("SOL_CHAMPION_STABLE_REASON_ENABLED", "false").lower() == "true"
+        )
+        self.sol_downtrend_override_enabled = (
+            os.getenv("SOL_DOWNTREND_OVERRIDE_ENABLED", "false").lower() == "true"
+        )
+        self.sol_downtrend_override_symbol = str(
+            os.getenv("SOL_DOWNTREND_OVERRIDE_SYMBOL", "cmt_solusdt")
+        ).strip().lower()
+        try:
+            self.sol_downtrend_override_momentum_pct = float(
+                os.getenv("SOL_DOWNTREND_OVERRIDE_MOMENTUM_PCT", "-4.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_downtrend_override_momentum_pct = -4.0
+        try:
+            self.sol_downtrend_override_rsi_max = float(
+                os.getenv("SOL_DOWNTREND_OVERRIDE_RSI_MAX", "35.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_downtrend_override_rsi_max = 35.0
+        self.sol_downtrend_override_require_ema20_lt_ema50 = (
+            os.getenv("SOL_DOWNTREND_OVERRIDE_REQUIRE_EMA20_LT_EMA50", "true").lower() == "true"
+        )
+        self.sol_downtrend_override_allow_ema_bull_if_slope_neg = (
+            os.getenv("SOL_DOWNTREND_OVERRIDE_ALLOW_EMA_BULL_IF_SLOPE_NEG", "false").lower() == "true"
+        )
+        try:
+            self.sol_downtrend_override_ema20_slope_max = float(
+                os.getenv("SOL_DOWNTREND_OVERRIDE_EMA20_SLOPE_MAX", "0.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_downtrend_override_ema20_slope_max = 0.0
+        self.sol_low_vol_symbol = str(
+            os.getenv("SOL_LOW_VOL_SYMBOL", "cmt_solusdt")
+        ).strip().lower()
+        self.sol_low_vol_allow = (
+            os.getenv("SOL_LOW_VOL_ALLOW", "false").lower() == "true"
+        )
+        try:
+            self.sol_low_vol_min_abs_momentum_pct = float(
+                os.getenv("SOL_LOW_VOL_MIN_ABS_MOMENTUM_PCT", "2.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_low_vol_min_abs_momentum_pct = 2.0
+        try:
+            self.sol_low_vol_max_rsi = float(
+                os.getenv("SOL_LOW_VOL_MAX_RSI", "40.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_low_vol_max_rsi = 40.0
+        self.sol_low_vol_require_trend_down = (
+            os.getenv("SOL_LOW_VOL_REQUIRE_TREND_DOWN", "true").lower() == "true"
+        )
+        self.sol_long_enabled = (
+            os.getenv("SOL_LONG_ENABLED", "false").lower() == "true"
+        )
+        self.sol_long_symbol = str(
+            os.getenv("SOL_LONG_SYMBOL", "cmt_solusdt")
+        ).strip().lower()
+        try:
+            self.sol_long_min_momentum_pct = float(
+                os.getenv("SOL_LONG_MIN_MOMENTUM_PCT", "3.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_long_min_momentum_pct = 3.0
+        try:
+            self.sol_long_min_rsi = float(
+                os.getenv("SOL_LONG_MIN_RSI", "65.0")
+            )
+        except (TypeError, ValueError):
+            self.sol_long_min_rsi = 65.0
+        self.sol_long_require_trend_up = (
+            os.getenv("SOL_LONG_REQUIRE_TREND_UP", "true").lower() == "true"
+        )
+
+    def _single_lane_soft_gate_bypass(self, symbol: str) -> bool:
+        if os.getenv("SINGLE_LANE_UNFREEZE_ENABLED", "false").lower() != "true":
+            return False
+        if os.getenv("SINGLE_LANE_SOFT_GATE_BYPASS_ENABLED", "true").lower() != "true":
+            return False
+        tuple_key = str(os.getenv("SINGLE_LANE_TUPLE_KEY", "") or "").strip()
+        if not tuple_key:
+            return False
+        target_symbol = tuple_key.split("|", 1)[0].strip().lower()
+        return bool(target_symbol) and str(symbol or "").strip().lower() == target_symbol
+
+    def _log_sol_no_signal(self, symbol: str, reason: str, context: Dict) -> None:
+        """Emit compact diagnostics for SOL no-signal decisions only."""
+        symbol_norm = str(symbol or "").strip().lower()
+        if symbol_norm != self.sol_downtrend_override_symbol:
+            return
+        def _f(key: str, default: float = 0.0) -> float:
+            try:
+                return float(context.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+        logger.info(
+            "SOL_NO_SIGNAL reason={} regime={} momentum_pct={:.4f} rsi={:.2f} ema20={:.5f} ema50={:.5f} ema20_slope={:.6f} "
+            "atr_pct={:.4f} atr_pct_slow={:.4f} tr_expanding={} atr_rising={} trend_up={} trend_down={} low_vol={} "
+            "long_gate={} short_gate={} short_trend_ok={} short_thr={:.4f} short_rsi_min={:.2f} short_rsi_max={:.2f}",
+            reason,
+            str(context.get("regime", "unknown")),
+            _f("momentum_pct"),
+            _f("rsi"),
+            _f("ema_fast"),
+            _f("ema_slow"),
+            _f("ema_fast_slope"),
+            _f("atr_pct"),
+            _f("atr_pct_slow"),
+            bool(context.get("tr_expanding", False)),
+            bool(context.get("atr_rising", False)),
+            bool(context.get("trend_up", False)),
+            bool(context.get("trend_down", False)),
+            bool(context.get("low_vol_flag", False)),
+            bool(context.get("long_gate", False)),
+            bool(context.get("short_gate", False)),
+            bool(context.get("short_trend_ok", False)),
+            _f("short_threshold_runtime"),
+            _f("short_rsi_min"),
+            _f("short_rsi_max"),
+        )
 
     def _calculate_rsi(self, prices: np.ndarray, period: int = 14) -> float:
         """Calculate RSI indicator."""
@@ -163,15 +315,40 @@ class MomentumHybridEngine:
                 logger.info("LOW_VOL gate reached")
                 allow = False
                 if symbol in ("cmt_ethusdt", "cmt_solusdt"):
-                    logger.info(
-                        "SOFT_GATE_BLOCKED symbol={} reason=override_loss_leader",
-                        symbol
-                    )
-                    logger.warning(
-                        "SOFT_GATE_BLOCKED_HARD symbol={} entry_reason=LOW_VOL_EXTREME_OVERRIDE reason=permanent_eth_sol_block",
-                        symbol,
-                    )
-                    return "no_signal"
+                    if self._single_lane_soft_gate_bypass(symbol):
+                        logger.warning(
+                            "SOFT_GATE_BYPASS symbol={} reason=single_lane_unfreeze",
+                            symbol,
+                        )
+                    else:
+                        logger.info(
+                            "SOFT_GATE_BLOCKED symbol={} reason=override_loss_leader",
+                            symbol
+                        )
+                        logger.warning(
+                            "SOFT_GATE_BLOCKED_HARD symbol={} entry_reason=LOW_VOL_EXTREME_OVERRIDE reason=permanent_eth_sol_block",
+                            symbol,
+                        )
+                        self._log_sol_no_signal(
+                            symbol,
+                            "low_vol_soft_gate_blocked_hard",
+                            {
+                                "regime": regime,
+                                "momentum_pct": momentum_pct,
+                                "rsi": rsi,
+                                "ema_fast": ema_fast,
+                                "ema_slow": ema_slow,
+                                "ema_fast_slope": ema_fast_slope,
+                                "atr_pct": atr_pct,
+                                "atr_pct_slow": atr_pct_slow,
+                                "tr_expanding": tr_expanding,
+                                "atr_rising": atr_rising,
+                                "trend_up": trend_up,
+                                "trend_down": trend_down,
+                                "low_vol_flag": low_vol_flag,
+                            },
+                        )
+                        return "no_signal"
                 probe_override_symbols = {
                     s.strip().lower()
                     for s in os.getenv(
@@ -344,6 +521,55 @@ class MomentumHybridEngine:
 
                 # LOW_VOL_SHORT_GATE_X3_WITH_ATR: conservative short unlock w/ range expansion confirmation
                 if momentum_pct <= -3.0 and rsi <= 45 and atr_pct >= 0.25:
+                    symbol_l = str(symbol or "").strip().lower()
+                    ema_cross_ok = ema_fast < ema_slow
+                    ema_slope_ok = ema_fast_slope <= self.sol_downtrend_override_ema20_slope_max
+                    if self.sol_downtrend_override_require_ema20_lt_ema50:
+                        ema_override_ok = ema_cross_ok
+                        ema_override_rule = "cross" if ema_cross_ok else "none"
+                    else:
+                        ema_override_ok = ema_cross_ok or (
+                            self.sol_downtrend_override_allow_ema_bull_if_slope_neg and ema_slope_ok
+                        )
+                        if ema_cross_ok:
+                            ema_override_rule = "cross"
+                        elif self.sol_downtrend_override_allow_ema_bull_if_slope_neg and ema_slope_ok:
+                            ema_override_rule = "slope"
+                        else:
+                            ema_override_rule = "none"
+                    if (
+                        self.sol_downtrend_override_enabled
+                        and symbol_l == self.sol_downtrend_override_symbol
+                        and momentum_pct <= self.sol_downtrend_override_momentum_pct
+                        and rsi <= self.sol_downtrend_override_rsi_max
+                        and ema_override_ok
+                    ):
+                        if self.sol_champion_stable_reason_enabled and symbol_l == self.sol_champion_signal_boost_symbol:
+                            override_reason = "Downtrend momentum"
+                        else:
+                            override_reason = (
+                                f"Downtrend momentum: RSI={rsi:.1f}, EMA20={ema_fast:.2f}, "
+                                f"EMA50={ema_slow:.2f}, Mom={momentum_pct:.1f}%"
+                            )
+                        logger.info(
+                            "SOL_SIGNAL_OVERRIDE fired: ema_rule={} symbol={} from=LOW_VOL_SHORT_GATE_X3_WITH_ATR "
+                            "to=Downtrend momentum stable_reason={} momentum_pct={:.3f} rsi={:.2f} ema20={:.5f} ema50={:.5f} ema20_slope={:.6f}",
+                            ema_override_rule,
+                            symbol,
+                            bool(self.sol_champion_stable_reason_enabled and symbol_l == self.sol_champion_signal_boost_symbol),
+                            momentum_pct,
+                            rsi,
+                            ema_fast,
+                            ema_slow,
+                            ema_fast_slope,
+                        )
+                        return {
+                            'direction': 'SHORT',
+                            'confidence': 0.70,
+                            'stop_loss_pct': 0.008,
+                            'take_profit_pct': 0.02,
+                            'reason': override_reason
+                        }
                     return {
                         'direction': 'SHORT',
                         'confidence': 0.68,
@@ -361,13 +587,89 @@ class MomentumHybridEngine:
                     allow = True
                 elif momentum_pct < short_threshold:
                     allow = True
+                symbol_l = str(symbol or "").strip().lower()
+                if symbol_l == self.sol_low_vol_symbol:
+                    sol_long_gate_enabled = (
+                        self.sol_long_enabled
+                        and symbol_l == self.sol_long_symbol
+                    )
+                    ema20_gt_ema50 = ema_fast > ema_slow
+                    sol_long_custom_allow = (
+                        sol_long_gate_enabled
+                        and momentum_pct >= self.sol_long_min_momentum_pct
+                        and rsi >= self.sol_long_min_rsi
+                        and ((not self.sol_long_require_trend_up) or trend_up or ema20_gt_ema50)
+                    )
+                    sol_custom_allow = (
+                        self.sol_low_vol_allow
+                        and (momentum_pct <= -abs(self.sol_low_vol_min_abs_momentum_pct))
+                        and (rsi <= self.sol_low_vol_max_rsi)
+                        and ((not self.sol_low_vol_require_trend_down) or trend_down)
+                    )
+                    if sol_custom_allow or sol_long_custom_allow:
+                        allow = True
+                    logger.info(
+                        "SOL_LOWVOL_GATE symbol={} result={} momentum_pct={:.4f} rsi={:.2f} trend_down={} allow={} "
+                        "thresholds=[min_mom={}, max_rsi={}, require_trend_down={}]",
+                        symbol,
+                        "PASS" if allow else "BLOCK",
+                        momentum_pct,
+                        rsi,
+                        trend_down,
+                        self.sol_low_vol_allow,
+                        self.sol_low_vol_min_abs_momentum_pct,
+                        self.sol_low_vol_max_rsi,
+                        self.sol_low_vol_require_trend_down,
+                    )
+                    long_gate_reason = "disabled"
+                    if sol_long_gate_enabled:
+                        if momentum_pct < self.sol_long_min_momentum_pct:
+                            long_gate_reason = "momentum_below_min"
+                        elif rsi < self.sol_long_min_rsi:
+                            long_gate_reason = "rsi_below_min"
+                        elif self.sol_long_require_trend_up and not (trend_up or ema20_gt_ema50):
+                            long_gate_reason = "trend_up_required"
+                        else:
+                            long_gate_reason = "pass"
+                    logger.info(
+                        "SOL_LONG_GATE_EVAL symbol={} momentum_pct={:.4f} rsi={:.2f} trend_up={} ema20_gt_ema50={} enabled={} result={} reason={} thresholds=[min_mom={}, min_rsi={}, require_trend_up={}]",
+                        symbol,
+                        momentum_pct,
+                        rsi,
+                        trend_up,
+                        ema20_gt_ema50,
+                        sol_long_gate_enabled,
+                        "PASS" if sol_long_custom_allow else "BLOCK",
+                        long_gate_reason,
+                        self.sol_long_min_momentum_pct,
+                        self.sol_long_min_rsi,
+                        self.sol_long_require_trend_up,
+                    )
                 if allow:
                     logger.info(
                         f"SOFT_GATE_LOW_VOL_PASS symbol={symbol} momentum_pct={momentum_pct:.3f} thresholds=[{short_threshold:.3f},{long_threshold:.3f}]"
                     )
                 if not allow:
                     logger.info(f"LOW_VOL gate blocked: momentum_pct={momentum_pct:.3f} rsi={rsi:.1f} trend_up={trend_up} trend_down={trend_down}")
-
+                    self._log_sol_no_signal(
+                        symbol,
+                        "low_vol_gate_blocked_allow_false",
+                        {
+                            "regime": regime,
+                            "momentum_pct": momentum_pct,
+                            "rsi": rsi,
+                            "ema_fast": ema_fast,
+                            "ema_slow": ema_slow,
+                            "ema_fast_slope": ema_fast_slope,
+                            "atr_pct": atr_pct,
+                            "atr_pct_slow": atr_pct_slow,
+                            "tr_expanding": tr_expanding,
+                            "atr_rising": atr_rising,
+                            "trend_up": trend_up,
+                            "trend_down": trend_down,
+                            "low_vol_flag": low_vol_flag,
+                        },
+                    )
                     return "no_signal"
 
             logger.info(f"{symbol} - RSI: {rsi:.1f}, EMA20: {ema_fast:.2f}, EMA50: {ema_slow:.2f}, Momentum: {momentum_pct:.2f}%")
@@ -400,21 +702,65 @@ class MomentumHybridEngine:
                 take_profit_pct = stop_loss_pct * 2.5  # 2.5:1 R/R
 
                 logger.info(f"📈 MOMENTUM LONG for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
-
+                if self.sol_long_enabled and str(symbol or "").strip().lower() == self.sol_long_symbol:
+                    long_reason = "Uptrend momentum"
+                else:
+                    long_reason = f'Uptrend momentum: RSI={rsi:.1f}, EMA20>{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
                 return {
                     'direction': 'LONG',
                     'confidence': total_confidence,
                     'stop_loss_pct': stop_loss_pct,
                     'take_profit_pct': take_profit_pct,
-                    'reason': f'Uptrend momentum: RSI={rsi:.1f}, EMA20>{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                    'reason': long_reason
                 }
 
             # === DOWNTREND MOMENTUM SHORT ===
             # Enter when trend is DOWN and RSI confirms weakness (not oversold yet)
-            if (trend_down and
-                rsi < 45 and rsi > 25 and  # Weak but not extreme
+            short_rsi_max = 45.0
+            short_rsi_min = 25.0
+            short_threshold_runtime = short_momentum_threshold
+            sol_boost_active = (
+                self.sol_champion_signal_boost_enabled
+                and str(symbol or "").strip().lower() == self.sol_champion_signal_boost_symbol
+                and regime == MarketRegime.STRONG_DOWNTREND
+            )
+            if sol_boost_active:
+                short_rsi_max = self.sol_champion_signal_boost_rsi_max
+                short_rsi_min = self.sol_champion_signal_boost_rsi_min
+                short_threshold_runtime = self.sol_champion_signal_boost_momentum_threshold
+                trend_override_by_slope = (
+                    self.sol_champion_signal_boost_allow_trend_up_if_ema20_slope_neg
+                    and ema_fast_slope <= self.sol_champion_signal_boost_ema20_slope_max
+                )
+                logger.info(
+                    "SOL_CHAMPION_SIGNAL_BOOST_ACTIVE symbol={} regime={} rsi_range=({:.1f},{:.1f}) momentum_threshold={:.3f} "
+                    "allow_trend_up_if_slope_neg={} ema20_slope={:.6f} ema20_slope_max={:.6f} trend_override_by_slope={}",
+                    symbol,
+                    regime,
+                    short_rsi_min,
+                    short_rsi_max,
+                    short_threshold_runtime,
+                    bool(self.sol_champion_signal_boost_allow_trend_up_if_ema20_slope_neg),
+                    ema_fast_slope,
+                    self.sol_champion_signal_boost_ema20_slope_max,
+                    bool(trend_override_by_slope),
+                )
+            else:
+                trend_override_by_slope = False
+            short_trend_ok = trend_down or trend_override_by_slope
+            long_gate = (
+                trend_up and
+                rsi > 52 and rsi < 75 and
+                current_price > ema_fast and
+                momentum_pct > long_momentum_threshold
+            )
+            short_gate = (
+                short_trend_ok and
+                rsi < short_rsi_max and rsi > short_rsi_min and
                 current_price < ema_fast and
-                momentum_pct < short_momentum_threshold):  # Negative momentum (slightly relaxed)
+                momentum_pct < short_threshold_runtime
+            )
+            if short_gate:
 
                 base_confidence = min(0.4 + (45 - rsi) / 50, 0.75)
                 total_confidence = (base_confidence * 0.7) + (model_confidence * 0.3)
@@ -424,12 +770,16 @@ class MomentumHybridEngine:
 
                 logger.info(f"📉 MOMENTUM SHORT for {symbol}: RSI {rsi:.1f}, Trend confirmed, Momentum {momentum_pct:.2f}%")
 
+                if self.sol_champion_stable_reason_enabled and str(symbol or "").strip().lower() == self.sol_champion_signal_boost_symbol:
+                    short_reason = "Downtrend momentum"
+                else:
+                    short_reason = f'Downtrend momentum: RSI={rsi:.1f}, EMA20<{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
                 return {
                     'direction': 'SHORT',
                     'confidence': total_confidence,
                     'stop_loss_pct': stop_loss_pct,
                     'take_profit_pct': take_profit_pct,
-                    'reason': f'Downtrend momentum: RSI={rsi:.1f}, EMA20<{ema_slow:.0f}, Mom={momentum_pct:.1f}%'
+                    'reason': short_reason
                 }
 
             # === EXTREME REVERSAL (Rare, high conviction only) ===
@@ -438,6 +788,31 @@ class MomentumHybridEngine:
             if regime == MarketRegime.STRONG_DOWNTREND and rsi < 20 and momentum_pct <= -0.25:
                 logger.info(
                     f"BLOCK_EXTREME_REVERSAL_LONG_STRONG_DOWNTREND symbol={symbol} rsi={rsi:.1f} momentum_pct={momentum_pct:.3f}"
+                )
+                self._log_sol_no_signal(
+                    symbol,
+                    "block_extreme_reversal_long_strong_downtrend",
+                    {
+                        "regime": regime,
+                        "momentum_pct": momentum_pct,
+                        "rsi": rsi,
+                        "ema_fast": ema_fast,
+                        "ema_slow": ema_slow,
+                        "ema_fast_slope": ema_fast_slope,
+                        "atr_pct": atr_pct,
+                        "atr_pct_slow": atr_pct_slow,
+                        "tr_expanding": tr_expanding,
+                        "atr_rising": atr_rising,
+                        "trend_up": trend_up,
+                        "trend_down": trend_down,
+                        "low_vol_flag": low_vol_flag,
+                        "long_gate": long_gate,
+                        "short_gate": short_gate,
+                        "short_trend_ok": short_trend_ok,
+                        "short_threshold_runtime": short_threshold_runtime,
+                        "short_rsi_min": short_rsi_min,
+                        "short_rsi_max": short_rsi_max,
+                    },
                 )
                 return "no_signal"
 
@@ -461,6 +836,31 @@ class MomentumHybridEngine:
                     'reason': f'Extreme reversal: RSI={rsi:.1f} > 80'
                 }
 
+            self._log_sol_no_signal(
+                symbol,
+                "no_momentum_conditions_met",
+                {
+                    "regime": regime,
+                    "momentum_pct": momentum_pct,
+                    "rsi": rsi,
+                    "ema_fast": ema_fast,
+                    "ema_slow": ema_slow,
+                    "ema_fast_slope": ema_fast_slope,
+                    "atr_pct": atr_pct,
+                    "atr_pct_slow": atr_pct_slow,
+                    "tr_expanding": tr_expanding,
+                    "atr_rising": atr_rising,
+                    "trend_up": trend_up,
+                    "trend_down": trend_down,
+                    "low_vol_flag": low_vol_flag,
+                    "long_gate": long_gate,
+                    "short_gate": short_gate,
+                    "short_trend_ok": short_trend_ok,
+                    "short_threshold_runtime": short_threshold_runtime,
+                    "short_rsi_min": short_rsi_min,
+                    "short_rsi_max": short_rsi_max,
+                },
+            )
             return None
 
         except Exception as e:

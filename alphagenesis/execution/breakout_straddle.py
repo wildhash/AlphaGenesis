@@ -63,6 +63,15 @@ class BreakoutStraddleManager:
         self.stale_adopted_runner_max_age_seconds = max(1800, int(os.getenv("STALE_ADOPTED_RUNNER_MAX_AGE_SECONDS", "21600")))
         self.stale_runner_cleanup_interval_seconds = max(60, int(os.getenv("STALE_RUNNER_CLEANUP_INTERVAL_SECONDS", "300")))
         self.close_reconcile_pause_seconds = max(0.0, min(2.0, float(os.getenv("CLOSE_RECONCILE_PAUSE_SECONDS", "0.2"))))
+        self.force_hedged_exit_symbols = {
+            s.strip().lower()
+            for s in os.getenv("FORCE_HEDGED_EXIT_SYMBOLS", "").split(",")
+            if s.strip()
+        }
+        self.force_hedged_exit_seconds = max(0, int(os.getenv("FORCE_HEDGED_EXIT_SECONDS", "0")))
+        self.force_hedged_exit_reason = str(
+            os.getenv("FORCE_HEDGED_EXIT_REASON", "FORCE_HEDGED_EXIT_UNBLOCK")
+        ).strip() or "FORCE_HEDGED_EXIT_UNBLOCK"
         self.finals_jitter_enabled = os.getenv("FINALS_JITTER_ENABLED", "false").lower() == "true"
         self.finals_jitter_max_delay_s = max(0.0, float(os.getenv("FINALS_JITTER_MAX_DELAY_S", "6.0")))
         self.finals_size_jitter_pct = max(0.0, min(0.50, float(os.getenv("FINALS_SIZE_JITTER_PCT", "0.04"))))
@@ -445,7 +454,58 @@ class BreakoutStraddleManager:
         if self.dry_run:
             logger.info(f"🟡 DRY_RUN: Would place order side={side} size={size:.6f} {symbol}")
             return {"dry_run": True, "client_oid": f"dry_run_{symbol}_{int(time.time())}"}
-        return self.weex.place_order(symbol=symbol, side=side, size=size, is_market=True)
+        result = self.weex.place_order(symbol=symbol, side=side, size=size, is_market=True)
+
+        # Emit order-level AI log for compliance linkage (orderId <-> AI decision trace).
+        try:
+            if self.ai_log_bus:
+                refs = self._extract_order_refs(result)
+                order_id = refs.get("order_id") or refs.get("client_oid")
+                success = self._order_success(result)
+                code = result.get("code") if isinstance(result, dict) else None
+                msg = result.get("msg") if isinstance(result, dict) else None
+                status_code = result.get("status_code") if isinstance(result, dict) else None
+                self.ai_log_bus.emit(
+                    stage="Order Execution",
+                    model="BreakoutStraddle",
+                    input_payload={
+                        "symbol": symbol,
+                        "side": side,
+                        "size": size,
+                        "strategy": "breakout_straddle",
+                    },
+                    output_payload={
+                        "success": success,
+                        "order_id": order_id,
+                        "code": code,
+                        "msg": msg,
+                        "status_code": status_code,
+                    },
+                    explanation=(
+                        "Straddle order: symbol={symbol} side={side} size={size}; "
+                        "orderId={order_id} success={success}."
+                    ).format(
+                        symbol=symbol,
+                        side=side,
+                        size=size,
+                        order_id=order_id,
+                        success=success,
+                    ),
+                    order_id=order_id,
+                )
+                logger.info(
+                    "AI_ORDER_LOG_DETAILS stage=Order Execution strategy=breakout_straddle "
+                    "symbol={} side={} size={} order_id={} success={}",
+                    symbol,
+                    side,
+                    size,
+                    order_id,
+                    success,
+                )
+        except Exception as exc:
+            logger.warning("AI_ORDER_LOG_FAIL stage=Order Execution symbol={} err={}", symbol, exc)
+
+        return result
 
     def _extract_order_refs(self, result: Dict) -> Dict[str, str]:
         if not isinstance(result, dict):
@@ -1199,6 +1259,57 @@ class BreakoutStraddleManager:
 
     def is_blocked(self, symbol: str) -> bool:
         state = self._get_state(symbol)
+        symbol_norm = str(symbol or "").strip().lower()
+        now = time.time()
+        if (
+            state.get("state") == self.STATE_HEDGED
+            and self.force_hedged_exit_seconds > 0
+            and symbol_norm in self.force_hedged_exit_symbols
+        ):
+            entry_time = float(state.get("entry_time") or now)
+            elapsed = now - entry_time
+            if elapsed >= float(self.force_hedged_exit_seconds):
+                logger.warning(
+                    "FORCE_HEDGED_EXIT_TRIGGER symbol={} elapsed_s={} source=is_blocked",
+                    symbol,
+                    int(elapsed),
+                )
+                if self._can_act(state, now):
+                    size = float(state.get("size") or 0.0)
+                    if size <= 0.0:
+                        size = max(
+                            float(state.get("long_size") or 0.0),
+                            float(state.get("short_size") or 0.0),
+                        )
+                        if size > 0.0:
+                            state["size"] = size
+                    if size > 0.0:
+                        self._emit_exit_ai_log(
+                            stage="Exit Decision",
+                            symbol=symbol,
+                            reason=self.force_hedged_exit_reason,
+                            input_payload={
+                                "symbol": symbol,
+                                "state": state.get("state"),
+                                "entry_time": state.get("entry_time"),
+                                "entry_price": state.get("entry_price"),
+                                "size": size,
+                                "elapsed_s": int(elapsed),
+                                "source": "is_blocked",
+                            },
+                            output_payload={"action": "close_hedge_force_unblock"},
+                        )
+                        self._close_long(symbol, size, state, reason=self.force_hedged_exit_reason)
+                        self._close_short(symbol, size, state, reason=self.force_hedged_exit_reason)
+                        self._mark_action(state, now)
+                        state["state"] = self.STATE_DONE
+                        self._maybe_apply_compound(state)
+                        logger.warning(
+                            "FORCE_HEDGED_EXIT_DONE symbol={} size={} source=is_blocked",
+                            symbol,
+                            size,
+                        )
+                        return False
         blocked = state["state"] in {
             self.STATE_HEDGED,
             self.STATE_RUNNER_LONG,
@@ -1823,6 +1934,42 @@ class BreakoutStraddleManager:
             return
 
         if current_state == self.STATE_HEDGED:
+            elapsed = now - float(state.get("entry_time") or now)
+            symbol_norm = str(symbol or "").strip().lower()
+            if (
+                self.force_hedged_exit_seconds > 0
+                and symbol_norm in self.force_hedged_exit_symbols
+                and elapsed >= float(self.force_hedged_exit_seconds)
+            ):
+                logger.warning(
+                    "FORCE_HEDGED_EXIT symbol={} elapsed_s={} size={} reason={}",
+                    symbol,
+                    int(elapsed),
+                    float(state.get("size") or 0.0),
+                    self.force_hedged_exit_reason,
+                )
+                if self._can_act(state, now):
+                    self._emit_exit_ai_log(
+                        stage="Exit Decision",
+                        symbol=symbol,
+                        reason=self.force_hedged_exit_reason,
+                        input_payload={
+                            "symbol": symbol,
+                            "state": current_state,
+                            "entry_time": state.get("entry_time"),
+                            "entry_price": state.get("entry_price"),
+                            "last_price": price,
+                            "size": state.get("size"),
+                            "elapsed_s": int(elapsed),
+                        },
+                        output_payload={"action": "close_hedge_force_unblock"},
+                    )
+                    self._close_long(symbol, state["size"], state, reason=self.force_hedged_exit_reason)
+                    self._close_short(symbol, state["size"], state, reason=self.force_hedged_exit_reason)
+                    self._mark_action(state, now)
+                    state["state"] = self.STATE_DONE
+                    self._maybe_apply_compound(state)
+                return
             # STALL_EXIT_LOW_VOL_ATR_SHORT: early exit on no follow-through
             entry_reason = state.get("entry_reason")
             if entry_reason == "LOW_VOL_SHORT_GATE_X3_WITH_ATR":
