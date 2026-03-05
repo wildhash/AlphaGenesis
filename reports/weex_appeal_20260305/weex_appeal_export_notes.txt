@@ -1,0 +1,52 @@
+WEEX Appeal Export Summary
+=========================
+Generated: 2026-03-05 (UTC)
+Source DB: /tmp/ai_logs_copy.sqlite (copied from /opt/AlphaGenesis/tmp/ai_logs.sqlite)
+Source table: ai_logs
+
+Deliverables
+------------
+1) weex_corrected_ai_decision_logs_full.csv
+   - 51,862 rows
+   - All Decision Making + Exit Decision logs
+   - Includes UTC and UTC+8 timestamps
+   - Includes normalized field selected_over_corrected
+
+2) weex_corrected_ai_decision_logs_mapped.csv
+   - 584 rows
+   - Subset of decision logs referenced by order mapping
+
+3) weex_order_log_mapping.csv
+   - 698 order-event rows
+   - 673 distinct order IDs
+   - Maps each order-event log row to AI decision log row
+   - Includes UTC and UTC+8 timestamps for both sides
+
+4) weex_decision_to_order_mapping.csv
+   - Reverse map from decision log IDs to linked order IDs
+
+5) weex_reviewer_sheet.csv
+   - Reviewer-first sheet with key columns:
+     order_id, symbol, side, order timestamp, linked decision action/reason, match type
+
+6) weex_case_btc_order_mapping.csv
+   - Focused extract for the disputed 2026-02-23 BTC sequence
+
+7) weex_case_btc_20260223_timeline.csv
+   - Chronological timeline for BTC logs around the disputed window
+
+Mapping Logic
+-------------
+- exact_order_id: same order_id exists on a decision row (typically Exit Decision)
+- nearest_decision_symbol: nearest prior Decision Making row for same symbol (<= 15 min)
+- nearest_exit_decision_symbol: nearest prior Exit Decision row for same symbol
+- nearest_decision_symbol_bidirectional: nearest Decision Making row within +/- 90 sec for same symbol (used for two BreakoutStraddle open legs)
+
+Result quality
+--------------
+- Unmatched order-event rows: 0
+- Match type counts:
+  * exact_order_id: 46
+  * nearest_decision_symbol: 116
+  * nearest_exit_decision_symbol: 534
+  * nearest_decision_symbol_bidirectional: 2
